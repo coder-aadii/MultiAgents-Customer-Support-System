@@ -17,6 +17,7 @@ services:
       retries: 10
 
   redis:
+    profiles: ["expanded"]
     image: redis:7-alpine
     container_name: mcss-redis
     command: ["redis-server", "--appendonly", "yes"]
@@ -31,6 +32,7 @@ services:
       retries: 10
 
   wukongim:
+    profiles: ["expanded"]
     image: ghcr.io/wukongim/wukongim:v2.2.5-20260422
     container_name: mcss-wukongim
     environment:
@@ -84,16 +86,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-      wukongim:
-        condition: service_healthy
     volumes:
       - ./api:/app
       - ./:/workspace:ro
     command: ["sh", "-c", "alembic upgrade head && poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
 
   worker:
+    profiles: ["expanded"]
     build:
       context: ./api
       dockerfile: Dockerfile
@@ -113,6 +112,7 @@ services:
     command: ["poetry", "run", "celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO"]
 
   beat:
+    profiles: ["expanded"]
     build:
       context: ./api
       dockerfile: Dockerfile

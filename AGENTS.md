@@ -28,10 +28,7 @@ Do not make unrelated refactors. Do not write a long plan for trivial or focused
 graph TB
   WEB[admin-web] --> API[api]
   WIDGET[widget] --> API
-  API --> REDIS[Redis]
-  API --> TASKS[Celery worker]
-  TASKS --> REDIS
-  API --> IM[WuKongIM]
+  API --> DB[(PostgreSQL 16 + pgvector)]
 ```
 
 | Service | Directory | Role / port |
@@ -39,8 +36,9 @@ graph TB
 | API | `api` | FastAPI core gateway, 8000; tests `tests/` |
 | Admin Web | `admin-web` | React 19 admin console, 5173 |
 | Widget | `widget` | React 18 widget bundle, 5174 |
+| Database | `postgres` | PostgreSQL 16 + pgvector, host port 55432 |
 
-Tech: Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Pydantic v2, Redis, Celery, WuKongIM; React/TypeScript/Vite; PostgreSQL 16 + pgvector. Compose lives in `compose.yaml`; `scripts/` contains dev lifecycle scripts.
+Tech: Python 3.11, FastAPI, SQLAlchemy 2, Alembic, Pydantic v2; React/TypeScript/Vite; PostgreSQL 16 + pgvector; REST polling. Non-MVP services (Redis, Celery, WuKongIM) deferred to `expanded` compose profile. Compose lives in `compose.yaml`; `scripts/` contains dev lifecycle scripts.
 
 Read the applicable implementation phase under `local/MSCC-From-Scratch-docs/` before edits.
 

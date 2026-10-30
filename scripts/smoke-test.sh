@@ -110,22 +110,30 @@ else
     exit 1
 fi
 
-# Test 9: Redis is healthy
+# Test 9: Redis is healthy (when running under expanded profile)
 echo "Test 9: Redis connectivity"
-if docker compose exec -T redis redis-cli ping | grep -qx "PONG"; then
-    echo "  PASS: Redis responds to ping"
+if docker compose ps --services --filter "status=running" 2>/dev/null | grep -qx "redis"; then
+    if docker compose exec -T redis redis-cli ping | grep -qx "PONG"; then
+        echo "  PASS: Redis responds to ping"
+    else
+        echo "  FAIL: Redis is not responding"
+        exit 1
+    fi
 else
-    echo "  FAIL: Redis is not responding"
-    exit 1
+    echo "  INFO: Redis deferred in v1.1 MVP profile (optional via --profile expanded)"
 fi
 
-# Test 10: WuKongIM is healthy
+# Test 10: WuKongIM is healthy (when running under expanded profile)
 echo "Test 10: WuKongIM health"
-if docker compose exec -T wukongim wget -q -Y off -O /dev/null http://localhost:5001/health; then
-    echo "  PASS: WuKongIM health endpoint responds"
+if docker compose ps --services --filter "status=running" 2>/dev/null | grep -qx "wukongim"; then
+    if docker compose exec -T wukongim wget -q -Y off -O /dev/null http://localhost:5001/health; then
+        echo "  PASS: WuKongIM health endpoint responds"
+    else
+        echo "  FAIL: WuKongIM health endpoint is unavailable"
+        exit 1
+    fi
 else
-    echo "  FAIL: WuKongIM health endpoint is unavailable"
-    exit 1
+    echo "  INFO: WuKongIM deferred in v1.1 MVP profile (optional via --profile expanded)"
 fi
 
 echo ""

@@ -309,4 +309,44 @@ This document records significant implementation decisions made during developme
 
 ---
 
+## 2026-10-30: Phase 0 Target Architecture Reconciliation (v1.1)
+
+**Context:** Reconciling the target Docker Compose stack against the v1.1 master specification. The master specification explicitly excludes Redis, WuKongIM, and Celery worker/Beat from the MVP architecture, using REST polling every 3 seconds and synchronous bounded ingestion.
+
+**Decisions:**
+- Reconciled `compose.yaml` to run core MVP services by default: `postgres` (host port 55432), `api`, `admin-web`, `widget`, and `e2e`.
+- Deferred non-MVP services (`redis`, `wukongim`, `worker`, `beat`) using Docker Compose profile `expanded` (`profiles: ["expanded"]`).
+- `api` service dependency updated to depend strictly on `postgres` (healthy) without blocking on deferred services.
+- Persistent volumes (`postgres-data`, `redis-data`, `wukongim-data`) are retained untouched to avoid any data loss.
+- Rollback path: run `docker compose --profile expanded up -d` to spin up the expanded stack at any time.
+
+**Rationale:** Aligns development and test environments with the minimal v1.1 contract while safely preserving existing volumes and providing an immediate non-destructive rollback.
+
+---
+
+## 2026-10-30: Inert Scaffolding Retention Approval
+
+**Context:** Phase 0 boundary specifies "no business tables, UI workflows, or widget behavior". The repository contains forward-looking business model classes (`api/app/models/`) and admin/widget route pages (`admin-web/src/pages/`, `widget/src/Widget.tsx`).
+
+**Decisions:**
+- Approved retaining inert scaffolding ahead of Phase 1 and Phase 2 implementations.
+- Alembic migration `0001_phase_0_extensions.py` remains the sole applied migration in Phase 0; no business tables are migrated to PostgreSQL.
+- API routing in `api/app/main.py` is restricted to `/healthz` and `/readyz`.
+
+**Rationale:** Deleting scaffolded models and components only to recreate them in Phase 1 would create unnecessary churn without technical benefit. Keeping them unmigrated and unrouted strictly honors the Phase 0 operational boundary.
+
+---
+
+## 2026-10-30: SQLAlchemy Reserved Name and Pytest Warning Resolution
+
+**Context:** SQLAlchemy emits warnings when declarative model attributes collide with `Base.metadata`. Deprecated custom pytest event loops also emit warnings.
+
+**Decisions:**
+- Mapped JSON metadata columns as `metadata_json = mapped_column("metadata", JSONB, default=dict, nullable=False)` in `audit_event.py` and `message.py`.
+- Configured `asyncio_default_fixture_loop_scope = "function"` in `api/pyproject.toml` and removed custom event loop fixtures from `api/tests/conftest.py`.
+
+**Rationale:** Eliminates warnings cleanly without obscuring diagnostic logging.
+
+---
+
 *Add new decisions above this line. Keep chronological order.*
