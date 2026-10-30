@@ -1,0 +1,12 @@
+{
+  "widget": {
+    "title": "MCSS Support",
+    "welcome": "Hi! How can MCSS Support help today?",
+    "placeholder": "Type a message...",
+    "send": "Send",
+    "sending": "Sending...",
+    "close": "Close",
+    "handoffMessage": "I'm connecting you with our support team so they can help further.",
+    "teamWillReply": "A team member will reply here"
+  }
+}

@@ -1,0 +1,182 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mcss-postgres
+    environment:
+      POSTGRES_DB: mcss
+      POSTGRES_USER: mcss
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcss -d mcss"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mcss-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "56379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  wukongim:
+    image: ghcr.io/wukongim/wukongim:v2.2.5-20260422
+    container_name: mcss-wukongim
+    environment:
+      WK_CLUSTER_NODEID: 1001
+      WK_CLUSTER_SERVERADDR: wukongim:11110
+      WK_CLUSTER_APIURL: http://wukongim:5001
+      WK_INTRANET_TCPADDR: wukongim:5100
+      WK_MODE: release
+      WK_EXTERNAL_IP: 127.0.0.1
+    ports:
+      - "5200:5200"
+    volumes:
+      - wukongim-data:/root/wukongim
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -Y off -O /dev/null http://localhost:5001/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: mcss-api
+    environment:
+      MCSS_ENV: ${MCSS_ENV:-development}
+      MCSS_API_HOST: ${MCSS_API_HOST:-0.0.0.0}
+      MCSS_API_PORT: ${MCSS_API_PORT:-8000}
+      MCSS_DATABASE_URL: ${MCSS_DATABASE_URL:-postgresql+psycopg://mcss:change-me@postgres:5432/mcss}
+      MCSS_REDIS_URL: ${MCSS_REDIS_URL:-redis://redis:6379/0}
+      MCSS_CELERY_BROKER_URL: ${MCSS_CELERY_BROKER_URL:-redis://redis:6379/1}
+      MCSS_CELERY_RESULT_BACKEND: ${MCSS_CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+      MCSS_WUKONGIM_API_URL: ${MCSS_WUKONGIM_API_URL:-http://wukongim:5001}
+      MCSS_WUKONGIM_WS_URL: ${MCSS_WUKONGIM_WS_URL:-ws://localhost:5200}
+      MCSS_WUKONGIM_SYSTEM_UID: ${MCSS_WUKONGIM_SYSTEM_UID:-mcss-system}
+      MCSS_JWT_SECRET: ${MCSS_JWT_SECRET:-replace-with-at-least-32-random-characters}
+      MCSS_JWT_ACCESS_MINUTES: ${MCSS_JWT_ACCESS_MINUTES:-15}
+      MCSS_JWT_REFRESH_DAYS: ${MCSS_JWT_REFRESH_DAYS:-7}
+      MCSS_CORS_ORIGINS: ${MCSS_CORS_ORIGINS:-http://localhost:5173,http://localhost:5174}
+      MCSS_WIDGET_ALLOWED_ORIGIN: ${MCSS_WIDGET_ALLOWED_ORIGIN:-http://localhost:5174}
+      MCSS_LLM_BASE_URL: ${MCSS_LLM_BASE_URL:-fake}
+      MCSS_LLM_API_KEY: ${MCSS_LLM_API_KEY:-}
+      MCSS_LLM_CHAT_MODEL: ${MCSS_LLM_CHAT_MODEL:-}
+      MCSS_EMBEDDING_MODEL: ${MCSS_EMBEDDING_MODEL:-}
+      MCSS_EMBEDDING_DIMENSIONS: ${MCSS_EMBEDDING_DIMENSIONS:-1536}
+      MCSS_RETRIEVAL_MIN_SCORE: ${MCSS_RETRIEVAL_MIN_SCORE:-0.72}
+      MCSS_ADMIN_EMAIL: ${MCSS_ADMIN_EMAIL:-admin@example.com}
+      MCSS_ADMIN_PASSWORD: ${MCSS_ADMIN_PASSWORD:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wukongim:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+      - ./:/workspace:ro
+    command: ["sh", "-c", "alembic upgrade head && poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+
+  worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: mcss-worker
+    environment:
+      MCSS_ENV: ${MCSS_ENV:-development}
+      MCSS_DATABASE_URL: ${MCSS_DATABASE_URL:-postgresql+psycopg://mcss:change-me@postgres:5432/mcss}
+      MCSS_REDIS_URL: ${MCSS_REDIS_URL:-redis://redis:6379/0}
+      MCSS_CELERY_BROKER_URL: ${MCSS_CELERY_BROKER_URL:-redis://redis:6379/1}
+      MCSS_CELERY_RESULT_BACKEND: ${MCSS_CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+      - ./:/workspace:ro
+    command: ["poetry", "run", "celery", "-A", "app.celery_app.celery_app", "worker", "--loglevel=INFO"]
+
+  beat:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: mcss-beat
+    environment:
+      MCSS_ENV: ${MCSS_ENV:-development}
+      MCSS_REDIS_URL: ${MCSS_REDIS_URL:-redis://redis:6379/0}
+      MCSS_CELERY_BROKER_URL: ${MCSS_CELERY_BROKER_URL:-redis://redis:6379/1}
+      MCSS_CELERY_RESULT_BACKEND: ${MCSS_CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./api:/app
+      - ./:/workspace:ro
+    command: ["poetry", "run", "celery", "-A", "app.celery_app.celery_app", "beat", "--loglevel=INFO"]
+
+  admin-web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile
+    container_name: mcss-admin-web
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./admin-web:/app
+      - admin-web-node-modules:/app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+
+  widget:
+    build:
+      context: ./widget
+      dockerfile: Dockerfile
+    container_name: mcss-widget
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./widget:/app
+      - widget-node-modules:/app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.56.0-noble
+    container_name: mcss-e2e
+    working_dir: /e2e
+    volumes:
+      - ./e2e:/e2e
+      - /e2e/node_modules
+    depends_on:
+      api:
+        condition: service_started
+      admin-web:
+        condition: service_started
+      widget:
+        condition: service_started
+    command: ["sh", "-c", "npm install && tail -f /dev/null"]
+
+volumes:
+  postgres-data:
+  redis-data:
+  wukongim-data:
+  admin-web-node-modules:
+  widget-node-modules:

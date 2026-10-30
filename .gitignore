@@ -1,0 +1,58 @@
+# Environment
+.env
+.env.local
+.env.dev
+.env.production
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+celerybeat-schedule*
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+postgres-data/
+data/
+
+# Docker
+docker-compose.override.yml
+
+# Testing
+coverage/
+*.lcov
+test-results/
+
+# Secrets
+*.pem
+*.key
+*.crt
+secrets/
+
+# Misc
+*.bak
+*.tmp
+.cache/
+
+local/

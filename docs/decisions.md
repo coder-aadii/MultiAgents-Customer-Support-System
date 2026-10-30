@@ -1,0 +1,312 @@
+# MCSS Implementation Decisions
+
+This document records significant implementation decisions made during development. Each entry includes the context, options considered, decision, and rationale.
+
+---
+
+## 2024-01-15: Repository Structure and Naming
+
+**Context:** Establishing the new MCSS repository as an original implementation.
+
+**Decision:**
+- Repository named `mcss` at root level
+- All internal identifiers use `MCSS` or `mcss` prefix
+- No external project identifiers in code or product text
+- Service directories: `api/`, `admin-web/`, `widget/`, `scripts/`, `docs/`
+
+**Rationale:** Clear MCSS ownership and consistent product identity.
+
+---
+
+## 2024-01-15: Technology Stack
+
+**Context:** Choosing the core technology stack for the MVP.
+
+**Decisions:**
+- **Backend:** Python 3.11, FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2, Poetry
+- **Database:** PostgreSQL 16 with pgvector extension
+- **Cache/jobs:** Redis 7 and Celery worker/Beat
+- **Real time:** WuKongIM, with PostgreSQL as the source of truth
+- **Admin UI:** React 19, TypeScript 5.9, Vite 7, React Router 7, Zustand, Tailwind CSS 4
+- **Widget:** React 18, TypeScript 5.6, Vite 5, Zustand, Emotion, IIFE build, Shadow DOM mounting
+- **Auth:** JWT (access + refresh), Argon2id password hashing
+- **Real-time:** WuKongIM for delivery; PostgreSQL remains the source of truth
+- **LLM:** OpenAI-compatible Chat Completions API behind provider adapter
+- **Embeddings:** OpenAI-compatible embeddings API, 1536 dimensions default
+- **Deployment:** Docker Compose, Caddy for production reverse proxy
+
+**Rationale:** Modern, well-supported stack with durable job processing and real-time delivery while retaining a simple source of truth.
+
+---
+
+## 2024-01-15: Database Design
+
+**Context:** Designing the PostgreSQL schema for conversations, knowledge base, and audit.
+
+**Decisions:**
+- UUID primary keys using `gen_random_uuid()`
+- `timestamptz` for all timestamps (UTC)
+- `pgcrypto` and `vector` extensions enabled
+- Enum types for status fields
+- HNSW cosine-distance index on `knowledge_chunks.embedding`
+- Single-row `widget_settings` table
+- Immutable `audit_events` table (no UPDATE/DELETE)
+
+**Rationale:** UUIDs prevent enumeration, pgvector enables semantic search, enums enforce data integrity.
+
+---
+
+## 2024-01-15: Authentication Design
+
+**Context:** Designing auth for both staff (admin web) and visitors (widget).
+
+**Decisions:**
+- Staff: Email/password → 15min access token + 7day refresh token (HttpOnly cookie)
+- Visitor: Anonymous session → 24h visitor JWT scoped to conversation
+- Refresh token rotation on use
+- Single admin bootstrapped via `scripts/seed-admin.py`
+- Admin can create/deactivate staff; staff cannot create admins
+- Rate limit: 5 login attempts / 15 min / email+IP
+
+**Rationale:** Short-lived access tokens limit exposure; HttpOnly cookies prevent XSS theft; visitor tokens isolate conversations.
+
+---
+
+## 2024-01-15: API Contract
+
+**Context:** Defining the HTTP API surface for both admin and widget consumers.
+
+**Decisions:**
+- All responses JSON with consistent error format
+- `/api/v1/` prefix for all endpoints
+- Cursor-based pagination (not offset)
+- UTC ISO-8601 timestamps
+- OpenAPI at `/openapi.json` (dev only)
+- Error codes: `VALIDATION_ERROR`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `RATE_LIMITED`, `INTERNAL_ERROR`
+
+**Rationale:** Predictable, versioned API with standard pagination and error handling.
+
+---
+
+## 2024-01-15: Assistant Workflow
+
+**Context:** Defining how the AI assistant processes visitor messages.
+
+**Decisions:**
+- State machine: validate → classify → retrieve → answer/handoff/clarify
+- Classifier: JSON output, temperature 0, 120 token limit
+- Actions: `answer`, `clarify`, `handoff`
+- Retrieval: top 5 chunks from published docs, cosine ≥ 0.72, max 4500 chars context
+- Answer: structured JSON with `source_ids`, `confidence`, 1-800 chars
+- Verification: citations must match retrieved chunks, confidence 0-1
+- Handoff triggers: explicit request, unsafe domain, low retrieval, low confidence, verification failure, provider failure
+- Never call LLM if conversation is `staff_active` or `closed`
+
+**Rationale:** Deterministic, auditable pipeline with safe fallbacks. Handoff is the default for uncertainty.
+
+---
+
+## 2024-01-15: Knowledge Base Ingestion
+
+**Context:** How documents are processed for retrieval.
+
+**Decisions:**
+- Accept: `.txt`, `.md`, text-based `.pdf`
+- Reject: encrypted/scanned PDFs
+- Chunking: ~700 tokens, 100 token overlap, heading-aware
+- Embedding: after document save, draft until all chunks embedded
+- Publish: only when embeddings complete
+- Archive: published → archived (read-only), draft can delete
+
+**Rationale:** Synchronous ingestion for ≤5MB documents; publish gate ensures retrieval quality.
+
+---
+
+## 2024-01-15: Widget Architecture
+
+**Context:** Building an embeddable widget that works on any website.
+
+**Decisions:**
+- IIFE bundle: `mcss-widget.js` exposing `window.MCSSWidget.init()`
+- Shadow DOM mounting to isolate CSS
+- Idempotent `init()` call
+- Config: `apiBaseUrl` (required), `position`, `accentColor`, `title`
+- Visitor ID in localStorage (`mcss_visitor_id`), JWT in memory only
+- Polling: 3s when open and visible
+- Message rendering: plain text, newlines preserved, HTTPS URLs linkified
+
+**Rationale:** Shadow DOM prevents host CSS conflicts; IIFE is simple to embed; memory-only JWT improves security.
+
+---
+
+## 2024-01-15: Configuration Management
+
+**Context:** Managing environment-specific configuration.
+
+**Decisions:**
+- `.env.example` committed, `.env` gitignored
+- Pydantic Settings with `MCSS_` prefix
+- Validation at startup
+- Production rejects weak JWT secret and wildcard CORS
+- Secret fields (`SECRET`, `PASSWORD`, `TOKEN`, `API_KEY`) never logged
+- Fake provider mode: `MCSS_LLM_BASE_URL=fake` or `MCSS_ENV=test`
+
+**Rationale:** Clear separation of config from code; fail-fast validation; CI-safe fake provider.
+
+---
+
+## 2024-01-15: Security Headers
+
+**Context:** Hardening HTTP responses.
+
+**Decisions:**
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY` (admin routes)
+- `Content-Security-Policy`: restrictive
+- `Referrer-Policy: no-referrer`
+- `X-Request-ID` on every response
+- CORS: exact origins only, credentials allowed
+
+**Rationale:** Defense in depth against common web vulnerabilities.
+
+---
+
+## 2024-01-15: Rate Limiting
+
+**Context:** Preventing abuse.
+
+**Decisions:**
+- Login: 5 attempts / 15 min / email+IP
+- Widget session create: 30 / hour / origin
+- Visitor messages: 10 / minute / visitor
+- Document upload: 5 MB max
+- JSON body: 64 KB max
+
+**Rationale:** Reasonable limits for legitimate use; prevents credential stuffing and spam.
+
+---
+
+## 2024-01-15: Provider Circuit Breaker
+
+**Context:** Handling LLM provider failures gracefully.
+
+**Decisions:**
+- Track consecutive failures per provider
+- After 3 failures in 60 seconds → open circuit for 60 seconds
+- During open circuit: immediate handoff instead of retry
+- Timeouts: classification 10s, answer 20s, embeddings 15s
+- Retry idempotent calls once with exponential backoff
+
+**Rationale:** Prevents cascade failures; handoff is safe fallback.
+
+---
+
+## 2024-01-15: Testing Strategy
+
+**Context:** Ensuring quality without paid LLM calls in CI.
+
+**Decisions:**
+- Fake provider implementation for tests
+- `MCSS_ENV=test` or `MCSS_LLM_BASE_URL=fake` enables fake mode
+- Unit tests: auth, JWT, RBAC, validation, chunking, retrieval, handoff rules, circuit breaker
+- Integration tests: ephemeral PostgreSQL with pgvector
+- Frontend: type-check + build + component tests
+- E2E: Playwright smoke tests for core flows
+- CI runs only fake-provider tests
+
+**Rationale:** Fast, deterministic, free CI; real provider tested manually before release.
+
+---
+
+## 2024-01-15: Development Scripts
+
+**Context:** Safe, reproducible development workflow.
+
+**Decisions:**
+- `dev-up.sh`: starts compose, waits for health, never resets volumes
+- `dev-down.sh`: stops compose, preserves volumes
+- `smoke-test.sh`: verifies health, ready, headers, no secret leakage
+- `seed-admin.py`: bootstraps admin, refuses to overwrite
+- No `make clean`, `down -v`, or secret regeneration in scripts
+
+**Rationale:** Developer-friendly; preserves data; safe for daily use.
+
+---
+
+## 2024-01-15: Documentation Structure
+
+**Context:** Required documentation files.
+
+**Decisions:**
+- `architecture.md`: system diagram, service boundaries, data flow
+- `api.md`: complete endpoint reference with examples
+- `threat-model.md`: STRIDE analysis, mitigations, residual risks
+- `runbook.md`: operations, deployment, incidents, backup
+- `decisions.md`: this file, append-only log
+
+**Rationale:** Complete operational documentation from day one.
+
+---
+
+## 2024-01-15: Branding and UI Text
+
+**Context:** Establishing MCSS visual identity.
+
+**Decisions:**
+- Product name: "MCSS — Multi-Agent Customer Support System"
+- Admin title: "MCSS — Support Console"
+- Widget title: "MCSS Support"
+- Tagline: "AI-Powered Customer Support"
+- CSS text wordmark "MCSS" (no logo assets required)
+- English only (`en.json` locale files)
+- WCAG AA contrast, keyboard navigation, semantic HTML
+
+**Rationale:** Consistent, accessible, original branding without design dependencies.
+
+---
+
+## 2024-01-15: Conversation Retention
+
+**Context:** Data lifecycle for conversations.
+
+**Decisions:**
+- 30-day default retention documented in code
+- No automatic deletion in MVP (manual ops task)
+- Audit events retained indefinitely
+- Knowledge base documents retained until explicitly archived/deleted
+
+**Rationale:** Compliance-friendly default; explicit deletion avoids accidental loss.
+
+---
+
+## 2024-01-15: File Upload Handling
+
+**Context:** Knowledge base document uploads.
+
+**Decisions:**
+- Max 5 MB per document
+- Synchronous processing (no background worker in MVP)
+- Text/Markdown: direct text extraction
+- PDF: text extraction, reject encrypted/scanned
+- Chunking and embedding happen on publish
+
+**Rationale:** Simplicity for MVP; 5MB covers typical docs; sync processing avoids worker complexity.
+
+---
+
+## 2024-01-15: CORS Policy
+
+**Context:** Cross-origin requests from admin web and widget.
+
+**Decisions:**
+- Exact origins in `MCSS_CORS_ORIGINS` (comma-separated)
+- `allow_credentials=true`
+- Never `*` with credentials
+- Widget `Origin` header validated against `widget_settings.allowed_origin`
+- Production requires explicit origins (no localhost)
+
+**Rationale:** Prevents CSRF and unauthorized embedding.
+
+---
+
+*Add new decisions above this line. Keep chronological order.*
