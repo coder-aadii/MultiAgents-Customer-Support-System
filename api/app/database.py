@@ -1,23 +1,26 @@
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import DeclarativeBase
+from collections.abc import AsyncGenerator
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from app.config import settings
 
 # Import all models to register them with Base
 from app.models import (  # noqa: F401
-    User,
-    WidgetSettings,
-    Visitor,
-    Conversation,
-    Message,
-    Handoff,
-    KnowledgeDocument,
-    KnowledgeChunk,
     AuditEvent,
+    Conversation,
+    Handoff,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    Message,
+    RefreshToken,
+    User,
+    Visitor,
+    VisitorSession,
+    WidgetSettings,
 )
 
-from app.models.base import Base
-
+EXPECTED_MIGRATION_REVISION = "0002_identity_and_conversations"
 
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -32,7 +35,7 @@ async_session_factory = async_sessionmaker(
 )
 
 
-async def get_session() -> AsyncSession:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         yield session
 
@@ -41,6 +44,10 @@ async def check_database_connection() -> bool:
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+            result = await conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            row = result.fetchone()
+            if not row or row[0] != EXPECTED_MIGRATION_REVISION:
+                return False
         return True
     except Exception:
         return False

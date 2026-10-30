@@ -9,8 +9,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import models before Base to register them
 from app.models import (  # noqa: F401
     User,
+    RefreshToken,
     WidgetSettings,
     Visitor,
+    VisitorSession,
     Conversation,
     Message,
     Handoff,

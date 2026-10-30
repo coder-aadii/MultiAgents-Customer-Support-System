@@ -1,10 +1,19 @@
-import uuid
-from datetime import datetime, timezone
-from sqlalchemy import String, Text, DateTime, ForeignKey, Enum, Index, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID
-from app.models.base import Base
+from __future__ import annotations
+
 import enum
+import uuid
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.knowledge_chunk import KnowledgeChunk
+    from app.models.user import User
 
 
 class DocumentStatus(str, enum.Enum):
@@ -22,9 +31,7 @@ class SourceType(str, enum.Enum):
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[SourceType] = mapped_column(Enum(SourceType), nullable=False)
     source_filename: Mapped[str] = mapped_column(String(255), nullable=True)
@@ -37,17 +44,19 @@ class KnowledgeDocument(Base):
     )
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
-    creator: Mapped["User"] = relationship()
-    chunks: Mapped[list["KnowledgeChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    creator: Mapped[User] = relationship()
+    chunks: Mapped[list[KnowledgeChunk]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<KnowledgeDocument(id={self.id}, title={self.title}, status={self.status})>"

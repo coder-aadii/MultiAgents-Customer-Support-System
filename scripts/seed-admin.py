@@ -6,14 +6,14 @@ import os
 import sys
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import select
-from passlib.hash import argon2
 
 # Add the API directory to the import path so this script works from Compose.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "api"))
 
 from app.config import settings
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.security.password import hash_password
 
 
 async def seed_admin():
@@ -25,8 +25,8 @@ async def seed_admin():
         print("ERROR: MCSS_ADMIN_EMAIL and MCSS_ADMIN_PASSWORD must be set in .env")
         sys.exit(1)
 
-    if len(password) < 12:
-        print("ERROR: Admin password must be at least 12 characters")
+    if len(password) < 8:
+        print("ERROR: Admin password must be at least 8 characters")
         sys.exit(1)
 
     engine = create_async_engine(settings.DATABASE_URL)
@@ -42,13 +42,13 @@ async def seed_admin():
             await engine.dispose()
             sys.exit(0)
 
-        # Create admin user
-        password_hash = argon2.hash(password)
+        # Create admin user using Argon2id
+        password_hash = hash_password(password)
         admin = User(
-            email=email.lower(),
+            email=email.lower().strip(),
             password_hash=password_hash,
             display_name="Administrator",
-            role="admin",
+            role=UserRole.admin,
             is_active=True,
         )
         session.add(admin)

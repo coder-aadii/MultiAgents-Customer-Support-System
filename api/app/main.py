@@ -1,15 +1,22 @@
 import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+
+import structlog
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
-import structlog
+from starlette.responses import Response
 
+from app.api.router import api_v1_router
+from app.common.errors import AppException, format_error_response
 from app.config import settings
-from app.database import close_db, check_database_connection
+from app.database import check_database_connection, close_db
 
 structlog.configure(
     processors=[
@@ -24,17 +31,32 @@ logger = structlog.get_logger()
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';"
+        if request.url.path in ("/docs", "/redoc"):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com; "
+                "font-src 'self' https://cdn.jsdelivr.net; "
+                "connect-src 'self'; frame-ancestors 'none';"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';"
+            )
         return response
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.validate_production()
     logger.info("application_starting", env=settings.MCSS_ENV)
     yield
@@ -53,7 +75,9 @@ app = FastAPI(
 
 
 @app.middleware("http")
-async def add_request_id(request: Request, call_next):
+async def add_request_id(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     request.state.request_id = request_id
 
@@ -62,51 +86,85 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
-    logger.warning("validation_error", request_id=request_id, errors=exc.errors())
-    return JSONResponse(
+    logger.warning("app_exception", request_id=request_id, code=exc.code, message=exc.message)
+    return format_error_response(
+        code=exc.code,
+        message=exc.message,
+        status_code=exc.status_code,
+        details=exc.details,
+        request_id=request_id,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    code_map = {
+        400: "VALIDATION_ERROR",
+        401: "UNAUTHORIZED",
+        403: "FORBIDDEN",
+        404: "NOT_FOUND",
+        405: "METHOD_NOT_ALLOWED",
+        409: "CONFLICT",
+        422: "VALIDATION_ERROR",
+        429: "RATE_LIMITED",
+    }
+    code = code_map.get(exc.status_code, "HTTP_ERROR")
+    logger.warning(
+        "http_exception", request_id=request_id, status_code=exc.status_code, detail=exc.detail
+    )
+    return format_error_response(
+        code=code,
+        message=str(exc.detail),
+        status_code=exc.status_code,
+        request_id=request_id,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    raw_errors = jsonable_encoder(exc.errors())
+    logger.warning("validation_error", request_id=request_id, errors=raw_errors)
+    return format_error_response(
+        code="VALIDATION_ERROR",
+        message="Request validation failed",
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "error": {
-                "code": "VALIDATION_ERROR",
-                "message": "Request validation failed",
-                "details": exc.errors(),
-            }
-        },
+        details={"validation_errors": raw_errors},
+        request_id=request_id,
     )
 
 
 @app.exception_handler(ValidationError)
-async def pydantic_validation_exception_handler(request: Request, exc: ValidationError):
+async def pydantic_validation_exception_handler(
+    request: Request, exc: ValidationError
+) -> JSONResponse:
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
-    logger.warning("pydantic_validation_error", request_id=request_id, errors=exc.errors())
-    return JSONResponse(
+    raw_errors = jsonable_encoder(exc.errors())
+    logger.warning("pydantic_validation_error", request_id=request_id, errors=raw_errors)
+    return format_error_response(
+        code="VALIDATION_ERROR",
+        message="Data validation failed",
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "error": {
-                "code": "VALIDATION_ERROR",
-                "message": "Data validation failed",
-                "details": exc.errors(),
-            }
-        },
+        details={"validation_errors": raw_errors},
+        request_id=request_id,
     )
 
 
 @app.exception_handler(Exception)
-async def generic_exception_handler(request: Request, exc: Exception):
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     logger.error("unhandled_exception", request_id=request_id, error=str(exc), exc_info=True)
-    return JSONResponse(
+    return format_error_response(
+        code="INTERNAL_ERROR",
+        message="An unexpected error occurred",
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": {
-                "code": "INTERNAL_ERROR",
-                "message": "An unexpected error occurred",
-                "details": {},
-            }
-        },
+        request_id=request_id,
     )
 
 
@@ -120,25 +178,28 @@ app.add_middleware(
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+app.include_router(api_v1_router)
+
 
 @app.get("/healthz", tags=["health"])
-async def healthz():
+async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/readyz", tags=["health"])
-async def readyz():
+async def readyz() -> Response:
     is_ready = await check_database_connection()
     if not is_ready:
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "not ready", "reason": "database unavailable"},
         )
-    return {"status": "ok"}
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok"})
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "app.main:app",
         host=settings.MCSS_API_HOST,

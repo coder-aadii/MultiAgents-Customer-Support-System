@@ -1,5 +1,3 @@
-from typing import List
-
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,7 +11,9 @@ class Settings(BaseSettings):
     )
 
     # Application
-    MCSS_ENV: str = Field(default="development", description="Environment: development, test, production")
+    MCSS_ENV: str = Field(
+        default="development", description="Environment: development, test, production"
+    )
     MCSS_API_HOST: str = Field(default="0.0.0.0", description="API host")
     MCSS_API_PORT: int = Field(default=8000, description="API port")
 
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # Authentication
     MCSS_JWT_SECRET: SecretStr = Field(
-        default="replace-with-at-least-32-random-characters",
+        default=SecretStr("replace-with-at-least-32-random-characters"),
         description="JWT secret key (min 32 chars)",
     )
     MCSS_JWT_ACCESS_MINUTES: int = Field(default=15, description="Access token lifetime in minutes")
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     )
 
     @property
-    def cors_origins(self) -> List[str]:
+    def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.MCSS_CORS_ORIGINS.split(",")]
 
     @field_validator("MCSS_ENV")
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # LLM Provider
     MCSS_LLM_BASE_URL: str = Field(default="fake", description="LLM provider base URL (or 'fake')")
-    MCSS_LLM_API_KEY: SecretStr = Field(default="", description="LLM API key")
+    MCSS_LLM_API_KEY: SecretStr = Field(default=SecretStr(""), description="LLM API key")
     MCSS_LLM_CHAT_MODEL: str = Field(default="", description="LLM chat model name")
 
     # Embeddings
@@ -70,11 +70,17 @@ class Settings(BaseSettings):
     MCSS_EMBEDDING_DIMENSIONS: int = Field(default=1536, description="Embedding vector dimensions")
 
     # Retrieval
-    MCSS_RETRIEVAL_MIN_SCORE: float = Field(default=0.72, description="Minimum retrieval cosine score")
+    MCSS_RETRIEVAL_MIN_SCORE: float = Field(
+        default=0.72, description="Minimum retrieval cosine score"
+    )
 
     # Admin bootstrap
-    MCSS_ADMIN_EMAIL: str = Field(default="admin@example.com", description="Admin email for bootstrap")
-    MCSS_ADMIN_PASSWORD: SecretStr = Field(default="", description="Admin password for bootstrap")
+    MCSS_ADMIN_EMAIL: str = Field(
+        default="admin@example.com", description="Admin email for bootstrap"
+    )
+    MCSS_ADMIN_PASSWORD: SecretStr = Field(
+        default=SecretStr(""), description="Admin password for bootstrap"
+    )
 
     @property
     def DATABASE_URL(self) -> str:
