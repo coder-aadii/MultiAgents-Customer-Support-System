@@ -20,7 +20,7 @@ from app.models import (  # noqa: F401
     WidgetSettings,
 )
 
-EXPECTED_MIGRATION_REVISION = "0002_identity_and_conversations"
+EXPECTED_MIGRATION_REVISION = "0003_knowledge_base"
 
 engine = create_async_engine(
     settings.DATABASE_URL,

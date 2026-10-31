@@ -32,6 +32,7 @@ export default function Widget({ config }: { config: WidgetConfig }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const messageCursorRef = useRef<string | null>(null);
 
   const title = config.title || t("widget.title");
 
@@ -61,10 +62,21 @@ export default function Widget({ config }: { config: WidgetConfig }) {
       };
       setMessages([welcomeMsg]);
 
-      // Fetch any existing messages
-      const msgsResp = await apiClient.listMessages({ limit: 50 });
-      if (msgsResp.items.length > 0) {
-        setMessages((prev) => reconcileMessages(prev, msgsResp.items));
+      // Fetch existing messages and catch up historical pages
+      let allFetched: WidgetMessage[] = [];
+      let cursor: string | null = null;
+      let hasMore = true;
+      while (hasMore) {
+        const msgsResp = await apiClient.listMessages({ cursor: cursor || undefined, limit: 50 });
+        allFetched = [...allFetched, ...msgsResp.items];
+        cursor = msgsResp.next_cursor;
+        hasMore = msgsResp.has_more && Boolean(cursor);
+      }
+      if (cursor) {
+        messageCursorRef.current = cursor;
+      }
+      if (allFetched.length > 0) {
+        setMessages((prev) => reconcileMessages(prev, allFetched));
       }
     } catch (err: unknown) {
       setErrorMessage(toSafeErrorMessage(err));
@@ -79,12 +91,15 @@ export default function Widget({ config }: { config: WidgetConfig }) {
     try {
       const [conv, msgResp] = await Promise.all([
         apiClient.getConversation(signal),
-        apiClient.listMessages({ limit: 50 }, signal),
+        apiClient.listMessages({ cursor: messageCursorRef.current || undefined, limit: 50 }, signal),
       ]);
 
       setConversation(conv);
       if (msgResp.items.length > 0) {
         setMessages((prev) => reconcileMessages(prev, msgResp.items));
+      }
+      if (msgResp.next_cursor) {
+        messageCursorRef.current = msgResp.next_cursor;
       }
     } catch {
       // Ignore polling abort errors cleanly

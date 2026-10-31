@@ -42,6 +42,16 @@ const ERROR_CODE_MAP: Record<string, string> = {
   VALIDATION_ERROR: "Validation error. Please verify your input.",
   RATE_LIMITED: "Too many requests. Please wait a moment before trying again.",
   INTERNAL_ERROR: "An unexpected error occurred. Please try again later.",
+  FILE_OVERSIZED: "File size exceeds maximum allowed limit of 5 MB.",
+  UNSUPPORTED_TYPE: "Unsupported file extension. Allowed formats are .txt, .md, and .pdf.",
+  PARSER_FAILED: "Failed to parse text from the uploaded file.",
+  PDF_ENCRYPTED: "Password-protected or encrypted PDFs are not supported.",
+  PDF_MALFORMED: "The uploaded PDF file is malformed or invalid.",
+  PDF_SCANNED_OR_NO_TEXT: "Scanned or image-only PDFs with no extractable text are not supported.",
+  EMPTY_CONTENT: "Document contains no readable text content.",
+  INVALID_DOCUMENT_STATE: "This operation cannot be performed on the document in its current status.",
+  TIMEOUT: "Processing timed out. Please retry.",
+  PROVIDER_ERROR: "Embedding generation failed. Please try again later.",
 };
 
 export function getApiErrorCode(error: unknown): string | null {

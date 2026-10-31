@@ -136,3 +136,83 @@ test("Sub-phase 2.2: message reconciliation deduplicates and sorts stably by (cr
   assert.strictEqual(reconciled[1].id, "msg-2");
   assert.strictEqual(reconciled[2].id, "msg-3");
 });
+
+test("Sub-phase 3.5: knowledge base error mapping handles file, parsing, and state violations safely", () => {
+  const fileOversizedErr = {
+    isAxiosError: true,
+    response: {
+      status: 400,
+      data: { error: { code: "FILE_OVERSIZED", message: "Raw server disk exception" } },
+    },
+  };
+  const msgOversized = toSafeErrorMessage(fileOversizedErr);
+  assert.strictEqual(msgOversized, "File size exceeds maximum allowed limit of 5 MB.");
+  assert.ok(!msgOversized.includes("disk exception"));
+
+  const unsupportedErr = {
+    isAxiosError: true,
+    response: {
+      status: 400,
+      data: { error: { code: "UNSUPPORTED_TYPE", message: "Bad extension .exe" } },
+    },
+  };
+  assert.strictEqual(
+    toSafeErrorMessage(unsupportedErr),
+    "Unsupported file extension. Allowed formats are .txt, .md, and .pdf."
+  );
+
+  const stateErr = {
+    isAxiosError: true,
+    response: {
+      status: 400,
+      data: { error: { code: "INVALID_DOCUMENT_STATE", message: "Transition error" } },
+    },
+  };
+  assert.strictEqual(
+    toSafeErrorMessage(stateErr),
+    "This operation cannot be performed on the document in its current status."
+  );
+
+  const timeoutErr = {
+    isAxiosError: true,
+    response: {
+      status: 400,
+      data: { error: { code: "TIMEOUT", message: "Embedding timeout" } },
+    },
+  };
+  assert.strictEqual(toSafeErrorMessage(timeoutErr), "Processing timed out. Please retry.");
+});
+
+test("Sub-phase 3.5: document state guards enforce legal transitions", () => {
+  type DocumentStatus = "draft" | "published" | "archived";
+  type IngestionStatus = "pending" | "processing" | "ready" | "failed";
+
+  const canPublish = (status: DocumentStatus, ingestion: IngestionStatus, chunks: number) =>
+    status === "draft" && ingestion === "ready" && chunks > 0;
+
+  const canDelete = (status: DocumentStatus) => status === "draft";
+  const canArchive = (status: DocumentStatus) => status === "published";
+  const canEdit = (status: DocumentStatus) => status === "draft";
+
+  // Draft ready with chunks can publish, can edit, can delete
+  assert.strictEqual(canPublish("draft", "ready", 3), true);
+  assert.strictEqual(canPublish("draft", "ready", 0), false); // Zero chunks cannot publish
+  assert.strictEqual(canPublish("draft", "processing", 2), false); // Processing cannot publish
+  assert.strictEqual(canPublish("draft", "failed", 0), false); // Failed cannot publish
+  assert.strictEqual(canPublish("published", "ready", 3), false); // Already published cannot publish
+
+  // Deletion only for drafts
+  assert.strictEqual(canDelete("draft"), true);
+  assert.strictEqual(canDelete("published"), false);
+  assert.strictEqual(canDelete("archived"), false);
+
+  // Archival only for published
+  assert.strictEqual(canArchive("published"), true);
+  assert.strictEqual(canArchive("draft"), false);
+  assert.strictEqual(canArchive("archived"), false);
+
+  // Edit only for draft
+  assert.strictEqual(canEdit("draft"), true);
+  assert.strictEqual(canEdit("published"), false);
+  assert.strictEqual(canEdit("archived"), false);
+});

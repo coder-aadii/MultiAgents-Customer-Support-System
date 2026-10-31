@@ -168,6 +168,16 @@ async def test_message_validation_trimming_and_html_rejection(setup_conversation
         assert resp_mixed.status_code == 201
         assert resp_mixed.json()["content"] == "Important text"
 
+        # Math / logical comparisons with < and > are preserved without corruption
+        math_content = "5 < 10 and 20 > 15 comparison"
+        resp_math = await client.post(
+            f"/api/v1/widget/conversations/{conv_id}/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json={"content": math_content, "client_message_id": str(uuid.uuid4())},
+        )
+        assert resp_math.status_code == 201
+        assert resp_math.json()["content"] == math_content
+
 
 @pytest.mark.asyncio
 async def test_staff_takeover_and_close(setup_conversation_env):

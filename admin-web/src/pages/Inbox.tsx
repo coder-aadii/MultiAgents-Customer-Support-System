@@ -55,6 +55,8 @@ export default function Inbox() {
   const messagesRef = useRef<Message[]>([]);
   messagesRef.current = messages;
 
+  const activeConvCursorRef = useRef<string | null>(null);
+
   // ---------------------------------------------------------------------------
   // 1. Fetch conversations list
   // ---------------------------------------------------------------------------
@@ -70,9 +72,29 @@ export default function Inbox() {
           signal
         );
 
-        setConversations(resp.items);
-        setListCursor(resp.next_cursor);
-        setListHasMore(resp.has_more);
+        if (isInitial) {
+          setConversations(resp.items);
+          setListCursor(resp.next_cursor);
+          setListHasMore(resp.has_more);
+        } else {
+          // Reconcile conversations: update existing, add new ones, preserve older paginated ones
+          setConversations((prev) => {
+            const map = new Map<string, Conversation>();
+            for (const c of prev) {
+              map.set(c.id, c);
+            }
+            for (const c of resp.items) {
+              map.set(c.id, { ...(map.get(c.id) || {}), ...c });
+            }
+            const updated = Array.from(map.values());
+            updated.sort(
+              (a, b) =>
+                new Date(b.last_message_at).getTime() -
+                new Date(a.last_message_at).getTime()
+            );
+            return updated;
+          });
+        }
       } catch (err: unknown) {
         if (signal?.aborted) return;
         setListError(toSafeErrorMessage(err));
@@ -113,18 +135,43 @@ export default function Inbox() {
         if (isInitial) {
           setMessagesLoading(true);
           setMessagesError(null);
+          activeConvCursorRef.current = null;
         }
+
+        const currentCursor = isInitial ? undefined : activeConvCursorRef.current || undefined;
 
         // Fetch detail and initial/updated messages concurrently
         const [convDetail, msgResp] = await Promise.all([
           conversationsApi.get(convId, signal),
-          messagesApi.list(convId, { limit: 50 }, signal),
+          messagesApi.list(convId, { cursor: currentCursor, limit: 50 }, signal),
         ]);
 
         setActiveConversation(convDetail);
 
+        let newMessages = msgResp.items;
+        let latestCursor = msgResp.next_cursor;
+
+        // On initial load, catch up all historical message pages if more than 50
+        if (isInitial && msgResp.has_more && latestCursor) {
+          let hasMore = true;
+          let pageCursor: string | null = latestCursor;
+          while (hasMore && pageCursor) {
+            const nextBatch = await messagesApi.list(convId, { cursor: pageCursor, limit: 50 }, signal);
+            newMessages = [...newMessages, ...nextBatch.items];
+            pageCursor = nextBatch.next_cursor;
+            hasMore = nextBatch.has_more && Boolean(pageCursor);
+            if (pageCursor) latestCursor = pageCursor;
+          }
+        }
+
+        if (latestCursor) {
+          activeConvCursorRef.current = latestCursor;
+        }
+
         // Reconcile messages by immutable ID and stable sort
-        setMessages((prev) => reconcileMessages(prev, msgResp.items));
+        if (newMessages.length > 0 || isInitial) {
+          setMessages((prev) => reconcileMessages(prev, newMessages));
+        }
 
         // Update conversation in the left list if changed
         setConversations((prevList) =>
@@ -144,6 +191,7 @@ export default function Inbox() {
   const selectConversation = (conv: Conversation) => {
     setSelectedConvId(conv.id);
     setActiveConversation(conv);
+    activeConvCursorRef.current = null;
     setMessages([]);
     setReplyText("");
     setSendError(null);

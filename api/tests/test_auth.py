@@ -209,3 +209,30 @@ async def test_logout():
         # Trying to refresh after logout must fail
         refresh_resp = await client.post("/api/v1/auth/refresh")
         assert refresh_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limiting():
+    """Test login endpoint enforces 5 attempts / 15 min limit and returns 429."""
+    from app.common.rate_limit import limiter
+    limiter.reset()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # First 5 attempts return 401
+        for _ in range(5):
+            resp = await client.post(
+                "/api/v1/auth/login",
+                json={"email": "ratelimit_target@example.com", "password": "wrong"},
+            )
+            assert resp.status_code == 401
+
+        # 6th attempt is blocked with 429 RATE_LIMITED
+        resp_blocked = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "ratelimit_target@example.com", "password": "wrong"},
+        )
+        assert resp_blocked.status_code == 429
+        assert resp_blocked.json()["error"]["code"] == "RATE_LIMITED"
+
+    limiter.reset()

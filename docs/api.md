@@ -73,11 +73,18 @@ Staff login with email/password.
 ```
 
 **Response 200:**
+*(Refresh token set as HttpOnly path-scoped cookie `mcss_refresh_token`)*
 ```json
 {
   "access_token": "eyJ...",
-  "refresh_token": "eyJ...",
-  "token_type": "bearer"
+  "token_type": "bearer",
+  "expires_in": 900,
+  "user": {
+    "id": "uuid",
+    "email": "staff@example.com",
+    "display_name": "Staff User",
+    "role": "staff"
+  }
 }
 ```
 
@@ -217,20 +224,25 @@ List conversations with filters.
 **Response 200:**
 ```json
 {
-  "conversations": [
+  "items": [
     {
       "id": "uuid",
       "visitor_id": "uuid",
-      "visitor_name": "John",
-      "visitor_email": "john@example.com",
+      "visitor": {
+        "id": "uuid",
+        "name": "John",
+        "email": "john@example.com"
+      },
       "status": "open|waiting_for_staff|staff_active|closed",
       "assigned_user_id": "uuid|null",
       "title": "Optional title",
       "last_message_at": "2024-01-01T00:00:00Z",
-      "created_at": "2024-01-01T00:00:00Z"
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
     }
   ],
-  "next_cursor": "uuid|null"
+  "next_cursor": "<opaque_cursor>|null",
+  "has_more": false
 }
 ```
 
@@ -245,7 +257,10 @@ Staff reply to conversation.
 
 **Request:**
 ```json
-{"content": "I can help with that"}
+{
+  "content": "I can help with that",
+  "client_message_id": "uuid"
+}
 ```
 
 #### POST /conversations/{id}/claim
@@ -292,7 +307,7 @@ Update draft document.
 Delete draft document.
 
 #### POST /knowledge/documents/{id}/publish
-Publish document (triggers embedding).
+Publish draft document (guarded: requires ingestion_status=ready and chunks > 0).
 
 #### POST /knowledge/documents/{id}/archive
 Archive published document.

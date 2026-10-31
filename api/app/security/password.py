@@ -16,6 +16,10 @@ def hash_password(password: str) -> str:
     return f"$argon2id$m=65536,t=2,p=4${b64_salt}${b64_derived}"
 
 
+# Precomputed valid Argon2id hash for constant-time unknown email verification
+DUMMY_ARGON2_HASH = hash_password("MCSS_DUMMY_TIMING_MITIGATION_PASSWORD")
+
+
 def verify_password(password: str, hashed: str) -> bool:
     """Verify password against Argon2id hash in constant time."""
     try:

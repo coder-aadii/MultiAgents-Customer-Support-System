@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field, field_validator
 from app.models.message import SenderType
 
 
+HTML_TAG_REGEX = re.compile(r"</?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^>]*)?/?>")
+
+
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=10000)
     client_message_id: uuid.UUID
@@ -20,11 +23,14 @@ class MessageCreate(BaseModel):
         trimmed = v.strip()
         if not trimmed:
             raise ValueError("Message content cannot be empty or whitespace only")
-        if "<" in trimmed and ">" in trimmed:
-            cleaned = re.sub(r"<[^>]+>", "", trimmed).strip()
+
+        # Strip valid HTML markup while preserving mathematical / logical operators (e.g. < and >)
+        if HTML_TAG_REGEX.search(trimmed):
+            cleaned = HTML_TAG_REGEX.sub("", trimmed).strip()
             if not cleaned:
                 raise ValueError("Message content cannot be HTML only")
             return cleaned
+
         return trimmed
 
 

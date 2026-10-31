@@ -2,7 +2,12 @@ from app.models.audit_event import ActorType, AuditEvent
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.handoff import Handoff, HandoffReason, HandoffStatus
 from app.models.knowledge_chunk import KnowledgeChunk
-from app.models.knowledge_document import DocumentStatus, KnowledgeDocument, SourceType
+from app.models.knowledge_document import (
+    DocumentStatus,
+    IngestionStatus,
+    KnowledgeDocument,
+    SourceType,
+)
 from app.models.message import Message, SenderType
 from app.models.refresh_token import RefreshToken
 from app.models.user import User, UserRole
@@ -26,6 +31,7 @@ __all__ = [
     "HandoffStatus",
     "KnowledgeDocument",
     "DocumentStatus",
+    "IngestionStatus",
     "SourceType",
     "KnowledgeChunk",
     "AuditEvent",

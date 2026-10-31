@@ -69,6 +69,59 @@ export interface Handoff {
   created_at: string;
 }
 
+export type DocumentStatus = "draft" | "published" | "archived";
+export type IngestionStatus = "pending" | "processing" | "ready" | "failed";
+export type SourceType = "text" | "markdown" | "pdf";
+
+export interface KnowledgeChunk {
+  id: string;
+  ordinal: number;
+  content: string;
+  token_estimate: number;
+  created_at: string;
+}
+
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  source_type: SourceType;
+  source_filename?: string | null;
+  status: DocumentStatus;
+  ingestion_status: IngestionStatus;
+  ingestion_error_code?: string | null;
+  chunk_count: number;
+  created_by_user_id: string;
+  published_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeDocumentDetail extends KnowledgeDocument {
+  content: string;
+  chunks: KnowledgeChunk[];
+}
+
+export interface RetrievalResultItem {
+  chunk_id: string;
+  document_id: string;
+  document_title: string;
+  rank: number;
+  score: number;
+  content: string;
+  token_estimate: number;
+  start_char: number;
+  end_char: number;
+}
+
+export interface RetrievalDebugResponse {
+  query: string;
+  results: RetrievalResultItem[];
+  total_found: number;
+  threshold: number;
+  total_chunks_scanned: number;
+  excluded_unpublished_matches: number;
+}
+
 // In-memory staff access token storage
 let currentAccessToken: string | null = null;
 let refreshPromise: Promise<string | null> | null = null;
@@ -252,6 +305,87 @@ export const handoffsApi = {
   },
   claim: async (id: string): Promise<Handoff> => {
     const res = await apiClient.post<Handoff>(`/handoffs/${id}/claim`);
+    return res.data;
+  },
+};
+
+export const knowledgeApi = {
+  list: async (
+    params?: {
+      status?: string;
+      ingestion_status?: string;
+      cursor?: string | null;
+      limit?: number;
+    },
+    signal?: AbortSignal
+  ): Promise<PaginatedResponse<KnowledgeDocument>> => {
+    const res = await apiClient.get<PaginatedResponse<KnowledgeDocument>>(
+      "/knowledge/documents",
+      { params, signal }
+    );
+    return res.data;
+  },
+  get: async (id: string, signal?: AbortSignal): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.get<KnowledgeDocumentDetail>(`/knowledge/documents/${id}`, {
+      signal,
+    });
+    return res.data;
+  },
+  create: async (data: {
+    title: string;
+    source_type: SourceType;
+    content: string;
+  }): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.post<KnowledgeDocumentDetail>("/knowledge/documents", data);
+    return res.data;
+  },
+  upload: async (formData: FormData): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.post<KnowledgeDocumentDetail>(
+      "/knowledge/documents/upload",
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+      }
+    );
+    return res.data;
+  },
+  update: async (
+    id: string,
+    data: { title?: string; content?: string }
+  ): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.patch<KnowledgeDocumentDetail>(
+      `/knowledge/documents/${id}`,
+      data
+    );
+    return res.data;
+  },
+  delete: async (id: string): Promise<void> => {
+    await apiClient.delete(`/knowledge/documents/${id}`);
+  },
+  publish: async (id: string): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.post<KnowledgeDocumentDetail>(
+      `/knowledge/documents/${id}/publish`
+    );
+    return res.data;
+  },
+  archive: async (id: string): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.post<KnowledgeDocumentDetail>(
+      `/knowledge/documents/${id}/archive`
+    );
+    return res.data;
+  },
+  retry: async (id: string): Promise<KnowledgeDocumentDetail> => {
+    const res = await apiClient.post<KnowledgeDocumentDetail>(
+      `/knowledge/documents/${id}/retry`
+    );
+    return res.data;
+  },
+  debugRetrieve: async (data: {
+    query: string;
+    limit?: number;
+    min_score?: number;
+  }): Promise<RetrievalDebugResponse> => {
+    const res = await apiClient.post<RetrievalDebugResponse>("/knowledge/retrieve/debug", data);
     return res.data;
   },
 };

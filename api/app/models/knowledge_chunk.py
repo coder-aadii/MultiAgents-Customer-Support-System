@@ -34,6 +34,13 @@ class KnowledgeChunk(Base):
 
     __table_args__ = (
         Index("ix_knowledge_chunks_document_ordinal", "document_id", "ordinal", unique=True),
+        Index(
+            "ix_knowledge_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
     def __repr__(self) -> str:

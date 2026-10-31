@@ -14,7 +14,7 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RefreshResponse, TokenResponse
 from app.schemas.user import UserResponse
-from app.security.password import verify_password
+from app.security.password import DUMMY_ARGON2_HASH, verify_password
 from app.security.tokens import create_access_jwt, generate_opaque_token, hash_token
 
 
@@ -56,8 +56,8 @@ async def login_user(
     if user:
         valid_password = verify_password(credentials.password, user.password_hash)
     else:
-        # Dummy verification to balance timing
-        verify_password(credentials.password, "$argon2id$m=65536,t=2,p=4$dummy$dummy")
+        # Balanced timing Argon2id verification with precomputed valid hash
+        verify_password(credentials.password, DUMMY_ARGON2_HASH)
 
     if not user or not valid_password or not user.is_active:
         await record_audit_event(

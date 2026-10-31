@@ -15,6 +15,9 @@ SENSITIVE_KEY_PATTERNS = {
     "raw_message",
     "raw_document",
     "content_raw",
+    "database_url",
+    "db_password",
+    "connection_url",
 }
 
 REDACTED_PLACEHOLDER = "[REDACTED]"

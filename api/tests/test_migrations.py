@@ -43,6 +43,8 @@ def test_migration_lifecycle(alembic_cfg):
         "messages",
         "handoffs",
         "audit_events",
+        "knowledge_documents",
+        "knowledge_chunks",
     }
     for expected in expected_tables:
         assert expected in tables, f"Expected table '{expected}' not found in {tables}"
@@ -63,7 +65,7 @@ def test_migration_lifecycle(alembic_cfg):
             row[0]
             for row in conn.execute(
                 text(
-                    "SELECT typname FROM pg_type WHERE typname IN ('user_role', 'conversation_status', 'sender_type', 'handoff_reason', 'handoff_status', 'actor_type')"
+                    "SELECT typname FROM pg_type WHERE typname IN ('user_role', 'conversation_status', 'sender_type', 'handoff_reason', 'handoff_status', 'actor_type', 'document_status_enum', 'source_type_enum', 'ingestion_status_enum')"
                 )
             ).fetchall()
         }
@@ -73,6 +75,21 @@ def test_migration_lifecycle(alembic_cfg):
         assert "handoff_reason" in enums
         assert "handoff_status" in enums
         assert "actor_type" in enums
+        assert "document_status_enum" in enums
+        assert "source_type_enum" in enums
+        assert "ingestion_status_enum" in enums
+
+        # Verify HNSW index on knowledge_chunks
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    "SELECT indexname FROM pg_indexes WHERE tablename = 'knowledge_chunks'"
+                )
+            ).fetchall()
+        }
+        assert "ix_knowledge_chunks_embedding_hnsw" in indexes
+        assert "ix_knowledge_chunks_document_ordinal" in indexes
 
         # Verify widget_settings singleton seed
         settings_row = conn.execute(

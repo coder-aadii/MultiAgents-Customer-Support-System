@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     )
     MCSS_JWT_ACCESS_MINUTES: int = Field(default=15, description="Access token lifetime in minutes")
     MCSS_JWT_REFRESH_DAYS: int = Field(default=7, description="Refresh token lifetime in days")
+    MCSS_RATE_LIMIT_ENABLED: bool = Field(default=True, description="Enable API rate limiting")
 
     # CORS
     MCSS_CORS_ORIGINS: str = Field(

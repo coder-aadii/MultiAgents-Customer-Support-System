@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import Depends, Header, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,9 +14,12 @@ from app.models.user import User, UserRole
 from app.models.visitor_session import VisitorSession
 from app.security.tokens import decode_access_jwt, hash_token
 
+security = HTTPBearer(auto_error=False)
+
 
 async def get_current_user(
     request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> User:
@@ -23,10 +27,15 @@ async def get_current_user(
 
     Rejects deactivated users even with a valid JWT.
     """
-    if not authorization or not authorization.startswith("Bearer "):
+    raw_token = None
+    if credentials:
+        raw_token = credentials.credentials
+    elif authorization and authorization.startswith("Bearer "):
+        raw_token = authorization.split(" ", 1)[1].strip()
+
+    if not raw_token:
         raise UnauthorizedError("Authentication token required")
 
-    raw_token = authorization.split(" ", 1)[1].strip()
     payload = decode_access_jwt(raw_token)
 
     try:

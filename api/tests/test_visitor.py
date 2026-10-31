@@ -100,3 +100,40 @@ async def test_visitor_conversation_isolation():
 
     with pytest.raises(NotFoundError):
         await validate_visitor_conversation(fake_conv_id, mock_session)
+
+
+@pytest.mark.asyncio
+async def test_visitor_message_rate_limiting():
+    """Verify visitor message posting enforces 10 messages / minute rate limit."""
+    from app.common.rate_limit import limiter
+    limiter.reset()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create session
+        sess_resp = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        token = sess_resp.json()["session_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Send 10 messages successfully
+        for i in range(10):
+            res = await client.post(
+                "/api/v1/widget/messages",
+                headers=headers,
+                json={"content": f"Message {i}", "client_message_id": str(uuid.uuid4())},
+            )
+            assert res.status_code == 201
+
+        # 11th message returns 429 RATE_LIMITED
+        res_blocked = await client.post(
+            "/api/v1/widget/messages",
+            headers=headers,
+            json={"content": "Blocked message", "client_message_id": str(uuid.uuid4())},
+        )
+        assert res_blocked.status_code == 429
+        assert res_blocked.json()["error"]["code"] == "RATE_LIMITED"
+
+    limiter.reset()

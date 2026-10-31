@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.errors import UnauthorizedError
+from app.common.rate_limit import rate_limit_login
 from app.database import get_session
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -27,6 +28,7 @@ async def login(
     db: AsyncSession = Depends(get_session),
 ) -> TokenResponse:
     request_id = getattr(request.state, "request_id", None)
+    rate_limit_login(request, credentials.email)
     token_response, raw_refresh = await login_user(db, credentials, request_id=request_id)
     set_refresh_cookie(response, raw_refresh)
     return token_response

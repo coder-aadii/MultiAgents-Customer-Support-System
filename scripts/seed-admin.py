@@ -53,19 +53,20 @@ async def seed_admin():
         else:
             print(f"Admin user {email} already exists. Refusing to overwrite.")
 
-        # Also ensure initial staff user exists for testing and development
-        staff_res = await session.execute(select(User).where(User.email == "staff@example.com"))
-        if not staff_res.scalar_one_or_none():
-            staff = User(
-                email="staff@example.com",
-                password_hash=hash_password("StaffPass123!"),
-                display_name="Staff User",
-                role=UserRole.staff,
-                is_active=True,
-            )
-            session.add(staff)
-            await session.commit()
-            print("Created staff user: staff@example.com")
+        # Seed demo staff user only in non-production environments
+        if settings.MCSS_ENV != "production":
+            staff_res = await session.execute(select(User).where(User.email == "staff@example.com"))
+            if not staff_res.scalar_one_or_none():
+                staff = User(
+                    email="staff@example.com",
+                    password_hash=hash_password("StaffPass123!"),
+                    display_name="Staff User",
+                    role=UserRole.staff,
+                    is_active=True,
+                )
+                session.add(staff)
+                await session.commit()
+                print("Created staff user: staff@example.com")
 
     await engine.dispose()
 

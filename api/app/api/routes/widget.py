@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.rate_limit import rate_limit_visitor_message, rate_limit_widget_session
 from app.database import get_session
 from app.dependencies import get_visitor_session, validate_visitor_conversation
 from app.models.message import SenderType
@@ -39,6 +40,10 @@ async def create_session(
 
     name = payload.name if payload else None
     email = payload.email if payload else None
+
+    # Apply rate limiting for new session creation (resuming with valid token is not counted)
+    if not raw_token:
+        rate_limit_widget_session(request, origin)
 
     # Browser supplies Origin header automatically
     return await create_or_resume_session(
@@ -83,6 +88,7 @@ async def create_visitor_current_message(
     db: AsyncSession = Depends(get_session),
 ) -> MessageResponse:
     request_id = getattr(request.state, "request_id", None)
+    rate_limit_visitor_message(session)
     msg, _ = await post_message(
         db=db,
         conversation_id=session.conversation_id,
@@ -148,6 +154,7 @@ async def create_visitor_message(
     db: AsyncSession = Depends(get_session),
 ) -> MessageResponse:
     request_id = getattr(request.state, "request_id", None)
+    rate_limit_visitor_message(session)
     msg, _ = await post_message(
         db=db,
         conversation_id=conversation_id,

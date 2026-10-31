@@ -28,21 +28,38 @@ class SourceType(str, enum.Enum):
     pdf = "pdf"
 
 
+class IngestionStatus(str, enum.Enum):
+    pending = "pending"
+    processing = "processing"
+    ready = "ready"
+    failed = "failed"
+
+
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    source_type: Mapped[SourceType] = mapped_column(Enum(SourceType), nullable=False)
-    source_filename: Mapped[str] = mapped_column(String(255), nullable=True)
+    source_type: Mapped[SourceType] = mapped_column(
+        Enum(SourceType, name="source_type_enum"), nullable=False
+    )
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
-        Enum(DocumentStatus), default=DocumentStatus.draft, nullable=False
+        Enum(DocumentStatus, name="document_status_enum"),
+        default=DocumentStatus.draft,
+        nullable=False,
     )
+    ingestion_status: Mapped[IngestionStatus] = mapped_column(
+        Enum(IngestionStatus, name="ingestion_status_enum"),
+        default=IngestionStatus.pending,
+        nullable=False,
+    )
+    ingestion_error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
-    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -55,8 +72,11 @@ class KnowledgeDocument(Base):
 
     creator: Mapped[User] = relationship()
     chunks: Mapped[list[KnowledgeChunk]] = relationship(
-        back_populates="document", cascade="all, delete-orphan"
+        back_populates="document", cascade="all, delete-orphan", order_by="KnowledgeChunk.ordinal"
     )
 
     def __repr__(self) -> str:
-        return f"<KnowledgeDocument(id={self.id}, title={self.title}, status={self.status})>"
+        return (
+            f"<KnowledgeDocument(id={self.id}, title={self.title}, "
+            f"status={self.status}, ingestion_status={self.ingestion_status})>"
+        )

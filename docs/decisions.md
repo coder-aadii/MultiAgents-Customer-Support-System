@@ -349,4 +349,53 @@ This document records significant implementation decisions made during developme
 
 ---
 
+## 2026-11-01: In-Memory Sliding Window Rate Limiter for Core Gateway Routes
+
+**Context:** The API contract (`docs/api.md`) defines rate limits on auth login (5/15m), widget session creation (30/h), and visitor messages (10/m). External dependencies like Redis are deferred from the minimal MVP stack.
+
+**Decisions:**
+- Implemented a thread-safe sliding window rate limiter (`api/app/common/rate_limit.py`) maintaining in-memory timestamps per key with periodic pruning.
+- Applied checks directly in `routes/auth.py` and `routes/widget.py`.
+- Made rate limiting configurable via `MCSS_RATE_LIMIT_ENABLED` setting.
+
+**Rationale:** Fulfills security contracts and mitigates brute force/spam without introducing non-MVP distributed cache infrastructure.
+
+---
+
+## 2026-11-01: Vector Retrieval Query Optimization and Two-Phase Text Loading
+
+**Context:** Vector retrieval in `retrieval_service.py` joined `KnowledgeDocument.content` (up to 5 MB per doc) and omitted a SQL `LIMIT`, forcing sequential table scans on PostgreSQL pgvector HNSW index and streaming massive duplicate text into Python memory.
+
+**Decisions:**
+- Added `.limit(50)` to the cosine distance query in `retrieval_service.py` to activate HNSW index graph traversal.
+- Removed `KnowledgeDocument.content` from candidate chunk scanning; parent document content is retrieved only for the final <= 5 matched chunks.
+
+**Rationale:** Restores sub-millisecond vector retrieval and prevents process memory spikes.
+
+---
+
+## 2026-11-01: Incremental Cursor Polling Contract for Live Surfaces
+
+**Context:** Inbox and Widget polled with `{ limit: 50 }` without cursor, causing chats with >50 messages to stop displaying new messages. Background polling also wiped out paginated conversations in the Admin Inbox.
+
+**Decisions:**
+- Both `Inbox.tsx` and `Widget.tsx` track the latest message cursor (`messageCursorRef`) and request only incremental updates.
+- Conversation list polling performs state reconciliation by ID, updating existing conversations and prepending new ones without discarding paginated history.
+
+**Rationale:** Ensures chat flows smoothly past 50 messages and preserves operator navigation state during background polling.
+
+---
+
+## 2026-11-01: Constant-Time Argon2id Verification for Unknown Staff Accounts
+
+**Context:** `auth_service.py` attempted dummy password verification using an invalid base64 hash, crashing in ~0.2ms and enabling user enumeration via timing attacks against registered staff emails (~90ms).
+
+**Decisions:**
+- Precomputed a valid Argon2id hash `DUMMY_ARGON2_HASH` in `api/app/security/password.py`.
+- Non-existent user logins run full Argon2id key derivation identically to existing users.
+
+**Rationale:** Satisfies the security requirement of indistinguishable timing between existing and non-existing accounts.
+
+---
+
 *Add new decisions above this line. Keep chronological order.*
