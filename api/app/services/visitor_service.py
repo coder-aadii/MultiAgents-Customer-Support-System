@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.errors import ForbiddenError
+from app.common.errors import ForbiddenError, NotFoundError
 from app.config import settings
 from app.models.audit_event import ActorType, AuditEvent
 from app.models.conversation import Conversation, ConversationStatus
@@ -28,9 +29,13 @@ def is_allowed_origin(request_origin: str | None, configured_origin: str) -> boo
     if normalized_req == normalized_cfg:
         return True
 
-    # In development mode, allow localhost origins if configured
-    if settings.MCSS_ENV == "development":
-        if normalized_req in settings.cors_origins:
+    # In development or test mode, allow configured cors origins and local widget testbed origins
+    if settings.MCSS_ENV in ("development", "test"):
+        if normalized_req in settings.cors_origins or normalized_req in (
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://widget:5174",
+        ):
             return True
 
     return False
@@ -130,3 +135,38 @@ async def create_or_resume_session(
         conversation_id=conversation.id,
         expires_at=expires_at,
     )
+
+
+async def update_visitor_profile(
+    db: AsyncSession,
+    visitor_id: uuid.UUID,
+    name: str | None = None,
+    email: str | None = None,
+    request_id: str | None = None,
+) -> Visitor:
+    """Update visitor name and/or email."""
+    stmt = select(Visitor).where(Visitor.id == visitor_id).with_for_update()
+    result = await db.execute(stmt)
+    visitor = result.scalar_one_or_none()
+    if not visitor:
+        raise NotFoundError("Visitor not found")
+
+    now = datetime.now(UTC)
+    if name is not None:
+        visitor.name = name.strip() if name.strip() else None
+    if email is not None:
+        visitor.email = email.strip() if email.strip() else None
+    visitor.last_seen_at = now
+
+    audit = AuditEvent(
+        actor_type=ActorType.visitor,
+        actor_id=visitor.id,
+        event_type="visitor.profile.updated",
+        resource_type="visitor",
+        resource_id=visitor.id,
+        metadata_json={"request_id": request_id},
+    )
+    db.add(audit)
+    await db.commit()
+    await db.refresh(visitor)
+    return visitor

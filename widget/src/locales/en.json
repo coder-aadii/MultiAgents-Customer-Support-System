@@ -7,6 +7,16 @@
     "sending": "Sending...",
     "close": "Close",
     "handoffMessage": "I'm connecting you with our support team so they can help further.",
-    "teamWillReply": "A team member will reply here"
+    "teamWillReply": "A team member will reply here",
+    "shareContact": "Share contact details",
+    "namePlaceholder": "Your name (optional)",
+    "emailPlaceholder": "Your email (optional)",
+    "saveContact": "Save",
+    "savingContact": "Saving...",
+    "contactSaved": "Details saved",
+    "closedNotice": "This conversation is closed.",
+    "networkError": "Connection error. Reconnecting...",
+    "openChat": "Open support chat",
+    "closeChat": "Close support chat"
   }
 }

@@ -1,69 +1,82 @@
 import { Routes, Route, Navigate } from "react-router-dom";
-import { useAuth } from "./hooks/useAuth";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
 import Knowledge from "./pages/Knowledge";
 import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
-import Layout from "./components/Layout";
 
-function PrivateRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
-  const { user, loading } = useAuth();
-
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  if (adminOnly && user.role !== "admin") {
-    return <Navigate to="/inbox" replace />;
-  }
-
-  return <>{children}</>;
-}
-
-function App() {
+export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route
         element={
-          <PrivateRoute>
+          <ProtectedRoute>
             <Layout />
-          </PrivateRoute>
+          </ProtectedRoute>
         }
       >
-        <Route path="/inbox" element={<Inbox />} />
-        <Route path="/knowledge" element={<Knowledge />} />
-        <Route path="/knowledge/new" element={<Knowledge />} />
-        <Route path="/knowledge/:id" element={<Knowledge />} />
         <Route
+          path="/inbox"
           element={
-            <PrivateRoute adminOnly>
+            <ProtectedRoute title="Inbox">
+              <Inbox />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/knowledge"
+          element={
+            <ProtectedRoute title="Knowledge Base">
+              <Knowledge />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/knowledge/new"
+          element={
+            <ProtectedRoute title="New Document">
+              <Knowledge />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/knowledge/:id"
+          element={
+            <ProtectedRoute title="Document Detail">
+              <Knowledge />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings/widget"
+          element={
+            <ProtectedRoute adminOnly title="Widget Settings">
               <Settings />
-            </PrivateRoute>
+            </ProtectedRoute>
           }
-        >
-          <Route path="/settings/widget" element={<Settings />} />
-          <Route path="/settings/team" element={<Settings />} />
-        </Route>
+        />
         <Route
+          path="/settings/team"
           element={
-            <PrivateRoute adminOnly>
-              <Audit />
-            </PrivateRoute>
+            <ProtectedRoute adminOnly title="Team Settings">
+              <Settings />
+            </ProtectedRoute>
           }
-        >
-          <Route path="/audit" element={<Audit />} />
-        </Route>
+        />
+        <Route
+          path="/audit"
+          element={
+            <ProtectedRoute adminOnly title="Audit Log">
+              <Audit />
+            </ProtectedRoute>
+          }
+        />
       </Route>
       <Route path="/" element={<Navigate to="/inbox" replace />} />
       <Route path="*" element={<Navigate to="/inbox" replace />} />
     </Routes>
   );
 }
-
-export default App;

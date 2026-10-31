@@ -1,10 +1,10 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { authApi, User } from "../api/auth";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { authApi, tokenManager, User } from "../api/client";
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -15,29 +15,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     try {
+      // 1. Try fetching current user directly
       const data = await authApi.me();
       setUser(data);
     } catch {
-      setUser(null);
+      // 2. Try rotating refresh token if access token missing or expired
+      try {
+        await authApi.refresh();
+        const data = await authApi.me();
+        setUser(data);
+      } catch {
+        setUser(null);
+      }
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    refreshUser();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  useEffect(() => {
+    // Setup expired token handler
+    tokenManager.setOnAuthExpired(() => {
+      setUser(null);
+    });
+
+    refreshUser();
+
+    return () => {
+      tokenManager.setOnAuthExpired(null);
+    };
+  }, [refreshUser]);
+
+  const login = async (email: string, password: string): Promise<User> => {
     await authApi.login(email, password);
-    await refreshUser();
+    const currentUser = await authApi.me();
+    setUser(currentUser);
+    return currentUser;
   };
 
   const logout = async () => {
-    await authApi.logout();
-    setUser(null);
+    try {
+      await authApi.logout();
+    } finally {
+      setUser(null);
+    }
   };
 
   return (

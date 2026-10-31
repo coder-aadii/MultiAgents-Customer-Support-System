@@ -6,15 +6,20 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.dependencies import validate_visitor_conversation
+from app.dependencies import get_visitor_session, validate_visitor_conversation
 from app.models.message import SenderType
 from app.models.visitor_session import VisitorSession
 from app.schemas.common import PaginatedResponse
 from app.schemas.conversation import ConversationDetailResponse
 from app.schemas.message import MessageCreate, MessageResponse
-from app.schemas.visitor import WidgetSessionRequest, WidgetSessionResponse
+from app.schemas.visitor import (
+    VisitorProfileUpdate,
+    VisitorResponse,
+    WidgetSessionRequest,
+    WidgetSessionResponse,
+)
 from app.services.conversation_service import get_conversation, list_messages, post_message
-from app.services.visitor_service import create_or_resume_session
+from app.services.visitor_service import create_or_resume_session, update_visitor_profile
 
 widget_router = APIRouter(prefix="/widget", tags=["widget"])
 
@@ -44,6 +49,68 @@ async def create_session(
         email=email,
         request_id=request_id,
     )
+
+
+@widget_router.get("/conversation", response_model=ConversationDetailResponse)
+async def get_visitor_current_conversation(
+    session: VisitorSession = Depends(get_visitor_session),
+    db: AsyncSession = Depends(get_session),
+) -> ConversationDetailResponse:
+    return await get_conversation(db, conversation_id=session.conversation_id)
+
+
+@widget_router.get("/messages", response_model=PaginatedResponse[MessageResponse])
+async def get_visitor_current_messages(
+    cursor: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    session: VisitorSession = Depends(get_visitor_session),
+    db: AsyncSession = Depends(get_session),
+) -> PaginatedResponse[MessageResponse]:
+    return await list_messages(
+        db, conversation_id=session.conversation_id, cursor=cursor, limit=limit
+    )
+
+
+@widget_router.post(
+    "/messages",
+    response_model=MessageResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_visitor_current_message(
+    payload: MessageCreate,
+    request: Request,
+    session: VisitorSession = Depends(get_visitor_session),
+    db: AsyncSession = Depends(get_session),
+) -> MessageResponse:
+    request_id = getattr(request.state, "request_id", None)
+    msg, _ = await post_message(
+        db=db,
+        conversation_id=session.conversation_id,
+        content=payload.content,
+        client_message_id=payload.client_message_id,
+        sender_type=SenderType.visitor,
+        sender_user_id=None,
+        request_id=request_id,
+    )
+    return msg
+
+
+@widget_router.patch("/profile", response_model=VisitorResponse)
+async def update_visitor_profile_endpoint(
+    payload: VisitorProfileUpdate,
+    request: Request,
+    session: VisitorSession = Depends(get_visitor_session),
+    db: AsyncSession = Depends(get_session),
+) -> VisitorResponse:
+    request_id = getattr(request.state, "request_id", None)
+    visitor = await update_visitor_profile(
+        db=db,
+        visitor_id=session.visitor_id,
+        name=payload.name,
+        email=payload.email,
+        request_id=request_id,
+    )
+    return VisitorResponse.model_validate(visitor)
 
 
 @widget_router.get("/conversations/{conversation_id}", response_model=ConversationDetailResponse)

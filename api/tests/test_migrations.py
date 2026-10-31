@@ -135,3 +135,19 @@ def test_migration_lifecycle(alembic_cfg):
     final_tables = set(inspector_final.get_table_names())
     for expected in expected_tables:
         assert expected in final_tables, f"Table '{expected}' not restored after re-upgrade"
+
+    # Restore default dev/test admin and staff users
+    with engine.connect() as conn:
+        from app.security.password import hash_password
+
+        admin_pass_hash = hash_password("Asdf@1234")
+        staff_pass_hash = hash_password("StaffPass123!")
+        conn.execute(
+            text(
+                "INSERT INTO users (id, email, password_hash, display_name, role, is_active, created_at, updated_at) "
+                "VALUES (gen_random_uuid(), 'admin@example.com', :admin_hash, 'Administrator', 'admin', true, now(), now()), "
+                "(gen_random_uuid(), 'staff@example.com', :staff_hash, 'Staff User', 'staff', true, now(), now())"
+            ),
+            {"admin_hash": admin_pass_hash, "staff_hash": staff_pass_hash},
+        )
+        conn.commit()

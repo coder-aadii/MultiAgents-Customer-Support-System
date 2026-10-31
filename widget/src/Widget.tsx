@@ -1,278 +1,414 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createWidgetApiClient, type WidgetMessage, type WidgetConversation } from "./api/client";
+import { reconcileMessages, PollingController } from "./utils/reconciliation";
+import { toSafeErrorMessage } from "./utils/errors";
+import { t } from "./utils/i18n";
+import { generateUUID } from "./utils/uuid";
 
-interface WidgetConfig {
+export interface WidgetConfig {
   apiBaseUrl: string;
   position?: "bottom-right" | "bottom-left";
   accentColor?: string;
   title?: string;
 }
 
-interface Message {
-  id: string;
-  sender_type: "visitor" | "assistant" | "staff" | "system";
-  content: string;
-  created_at: string;
-  metadata?: {
-    source_ids?: string[];
-    confidence?: number;
-    handoff_reason?: string;
-  };
-}
-
 export default function Widget({ config }: { config: WidgetConfig }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<WidgetMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [_visitorId, setVisitorId] = useState<string | null>(null);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [conversation, setConversation] = useState<WidgetConversation | null>(null);
+  const [sessionInitialized, setSessionInitialized] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Optional contact details state
+  const [showContactForm, setShowContactForm] = useState(false);
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [isSavingContact, setIsSavingContact] = useState(false);
+  const [contactSaved, setContactSaved] = useState(false);
+
+  // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  const accentColor = config.accentColor || "#2563eb";
-  const title = config.title || "MCSS Support";
-  const apiBaseUrl = config.apiBaseUrl;
+  const title = config.title || t("widget.title");
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  // In-memory API client instance
+  const [apiClient] = useState(() => createWidgetApiClient(config.apiBaseUrl));
+
+  // ---------------------------------------------------------------------------
+  // 1. Session initialization
+  // ---------------------------------------------------------------------------
+  const initSession = useCallback(async () => {
+    if (sessionInitialized) return;
+    try {
+      await apiClient.createSession();
+      setSessionInitialized(true);
+
+      // Fetch initial conversation detail
+      const conv = await apiClient.getConversation();
+      setConversation(conv);
+
+      // Add default welcome message if no messages yet
+      const welcomeMsg: WidgetMessage = {
+        id: "welcome-message",
+        conversation_id: conv.id,
+        sender_type: "assistant",
+        content: t("widget.welcome"),
+        created_at: conv.created_at,
+      };
+      setMessages([welcomeMsg]);
+
+      // Fetch any existing messages
+      const msgsResp = await apiClient.listMessages({ limit: 50 });
+      if (msgsResp.items.length > 0) {
+        setMessages((prev) => reconcileMessages(prev, msgsResp.items));
+      }
+    } catch (err: unknown) {
+      setErrorMessage(toSafeErrorMessage(err));
+    }
+  }, [apiClient, sessionInitialized]);
+
+  // ---------------------------------------------------------------------------
+  // 2. Polling for messages while panel is open & visible
+  // ---------------------------------------------------------------------------
+  const pollServer = useCallback(async (signal: AbortSignal) => {
+    if (!apiClient.getSessionToken()) return;
+    try {
+      const [conv, msgResp] = await Promise.all([
+        apiClient.getConversation(signal),
+        apiClient.listMessages({ limit: 50 }, signal),
+      ]);
+
+      setConversation(conv);
+      if (msgResp.items.length > 0) {
+        setMessages((prev) => reconcileMessages(prev, msgResp.items));
+      }
+    } catch {
+      // Ignore polling abort errors cleanly
+    }
+  }, [apiClient]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (!isOpen) return;
 
-  const createSession = async () => {
-    try {
-      const storedSessionToken = localStorage.getItem("mcss_visitor_session_token");
-      const response = await fetch(`${apiBaseUrl}/widget/sessions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(storedSessionToken ? { "X-MCSS-Visitor-Session": storedSessionToken } : {}),
-        },
-        body: JSON.stringify({}),
-      });
-
-      if (!response.ok) throw new Error("Failed to create session");
-
-      const data = await response.json();
-      setVisitorId(data.visitor_id);
-      setConversationId(data.conversation_id);
-      setToken(data.token);
-
-      if (data.token) {
-        localStorage.setItem("mcss_visitor_session_token", data.token);
-      }
-
-      if (data.welcome_message) {
-        setMessages([
-          {
-            id: "welcome",
-            sender_type: "assistant",
-            content: data.welcome_message,
-            created_at: new Date().toISOString(),
-          },
-        ]);
-      }
-    } catch (error) {
-      console.error("Failed to create widget session:", error);
+    // Init session on first open
+    if (!sessionInitialized) {
+      initSession();
     }
-  };
 
-  const fetchMessages = async () => {
-    if (!token || !conversationId) return;
+    const polling = new PollingController({
+      intervalMs: 3000,
+      onPoll: pollServer,
+      isActive: () => isOpen,
+    });
 
-    try {
-      const response = await fetch(`${apiBaseUrl}/widget/messages?limit=50`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+    polling.start();
+    return () => {
+      polling.stop();
+    };
+  }, [isOpen, sessionInitialized, initSession, pollServer]);
 
-      if (response.ok) {
-        const data = await response.json();
-        setMessages(data.messages || []);
-      }
-    } catch (error) {
-      console.error("Failed to fetch messages:", error);
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    if (isOpen && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  };
+  }, [messages.length, isOpen]);
 
-  const sendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputValue.trim() || !token || loading) return;
+  // Focus textarea when panel opens
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+    }
+  }, [isOpen]);
 
-    const content = inputValue.trim();
-    setInputValue("");
-    setLoading(true);
+  // Escape key closes panel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
+  // ---------------------------------------------------------------------------
+  // 3. Send message
+  // ---------------------------------------------------------------------------
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = inputValue.trim();
+    if (!trimmed || isSending) return;
+
+    if (conversation?.status === "closed") {
+      setErrorMessage(t("widget.closedNotice"));
+      return;
+    }
+
+    setIsSending(true);
+    setErrorMessage(null);
+
+    const clientMsgId = generateUUID();
 
     try {
-      await fetch(`${apiBaseUrl}/widget/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ content }),
+      const sentMsg = await apiClient.sendMessage({
+        content: trimmed,
+        client_message_id: clientMsgId,
       });
-      await fetchMessages();
-    } catch (error) {
-      console.error("Failed to send message:", error);
+
+      setMessages((prev) => reconcileMessages(prev, [sentMsg]));
+      setInputValue("");
+      textareaRef.current?.focus();
+    } catch (err: unknown) {
+      setErrorMessage(toSafeErrorMessage(err));
     } finally {
-      setLoading(false);
+      setIsSending(false);
     }
   };
 
-  useEffect(() => {
-    createSession();
-  }, []);
-
-  useEffect(() => {
-    if (!isOpen || !token) return;
-
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchMessages();
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [isOpen, token]);
-
-  const toggleOpen = () => {
-    setIsOpen(!isOpen);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage(e);
+      handleSendMessage();
     }
   };
 
-  if (!isOpen) {
-    return (
-      <button
-        onClick={toggleOpen}
-        className="fixed bottom-5 right-5 z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
-        style={{ backgroundColor: accentColor }}
-        aria-label={title}
-        aria-expanded="false"
-      >
-        <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h12M8 12l4-4m-4 4l4 4m-10 3v-1a1 1 0 011-1h13a1 1 0 011 1v3a1 1 0 01-1 1H9a1 1 0 01-1-1z" />
-        </svg>
-      </button>
-    );
-  }
+  // ---------------------------------------------------------------------------
+  // 4. Save contact details
+  // ---------------------------------------------------------------------------
+  const handleSaveContact = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contactName.trim() && !contactEmail.trim()) return;
+
+    setIsSavingContact(true);
+    try {
+      await apiClient.updateProfile({
+        name: contactName.trim() || null,
+        email: contactEmail.trim() || null,
+      });
+      setContactSaved(true);
+      setShowContactForm(false);
+    } catch (err: unknown) {
+      setErrorMessage(toSafeErrorMessage(err));
+    } finally {
+      setIsSavingContact(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // 5. Plain text linkification helper (safe text nodes)
+  // ---------------------------------------------------------------------------
+  const renderMessageContent = (content: string) => {
+    const urlRegex = /(https:\/\/[^\s]+)/g;
+    const parts = content.split(urlRegex);
+
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={index}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {part}
+          </a>
+        );
+      }
+      return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
+  };
+
+  const isClosed = conversation?.status === "closed";
 
   return (
-    <div
-      className="fixed bottom-5 right-5 z-50 w-full max-w-sm md:max-w-[360px] h-[520px] bg-white rounded-xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden"
-      style={{ maxHeight: "100vh", width: window.innerWidth < 480 ? "calc(100vw - 20px)" : "360px" }}
-      role="dialog"
-      aria-label={title}
-    >
-      <header
-        className="flex items-center justify-between px-4 py-3 border-b border-gray-200"
-        style={{ backgroundColor: accentColor }}
+    <div id="mcss-widget-root">
+      {/* Floating launcher */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="mcss-launcher-btn"
+        aria-expanded={isOpen}
+        aria-label={isOpen ? t("widget.closeChat") : t("widget.openChat")}
       >
-        <h2 className="text-white font-semibold">{title}</h2>
-        <button
-          onClick={toggleOpen}
-          className="text-white hover:text-gray-200 p-1 rounded"
-          aria-label="Close chat"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        {isOpen ? (
+          <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
-        </button>
-      </header>
+        ) : (
+          <svg width="28" height="28" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="2"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+            />
+          </svg>
+        )}
+      </button>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4" role="log" aria-live="polite">
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.sender_type === "visitor" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className="max-w-[75%] px-4 py-2 rounded-2xl"
-              style={{
-                backgroundColor:
-                  message.sender_type === "visitor"
-                    ? accentColor
-                    : message.sender_type === "assistant"
-                    ? "#f3f4f6"
-                    : message.sender_type === "staff"
-                    ? "#e0e7ff"
-                    : "#fef3c7",
-                color: message.sender_type === "visitor" ? "white" : "inherit",
-                borderRadius:
-                  message.sender_type === "visitor"
-                    ? "1.5rem 1.5rem 0 1.5rem"
-                    : "1.5rem 1.5rem 1.5rem 0",
-              }}
+      {/* Chat Panel */}
+      {isOpen && (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label={title}
+          className="mcss-panel"
+        >
+          {/* Header */}
+          <header className="mcss-header">
+            <h2>{title}</h2>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="mcss-close-btn"
+              aria-label={t("widget.close")}
             >
-              <p className="whitespace-pre-wrap text-sm">{message.content}</p>
-              {message.sender_type === "assistant" && message.metadata?.source_ids && (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {message.metadata.source_ids.map((_sourceId, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2 py-0.5 text-xs rounded bg-gray-200 text-gray-700"
-                    >
-                      Source {idx + 1}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {message.sender_type === "assistant" && message.metadata?.confidence !== undefined && (
-                <div className="mt-1 text-xs opacity-70">
-                  Confidence: {(message.metadata.confidence * 100).toFixed(0)}%
-                </div>
-              )}
-              <div className="mt-1 text-xs opacity-60 text-right">
-                {new Date(message.created_at).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </div>
-            </div>
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
+              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </header>
 
-      {messages.some((m) => m.metadata?.handoff_reason) && (
-        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200">
-          <p className="text-sm text-amber-800 text-center">
-            A team member will reply here
-          </p>
+          {/* Optional contact details bar */}
+          <div className="mcss-contact-bar">
+            {!contactSaved ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowContactForm(!showContactForm)}
+                  className="mcss-contact-toggle"
+                >
+                  {showContactForm ? "Cancel" : t("widget.shareContact")}
+                </button>
+                {showContactForm && (
+                  <form onSubmit={handleSaveContact} className="mcss-contact-form">
+                    <input
+                      type="text"
+                      placeholder={t("widget.namePlaceholder")}
+                      value={contactName}
+                      onChange={(e) => setContactName(e.target.value)}
+                      className="mcss-contact-input"
+                      maxLength={100}
+                    />
+                    <input
+                      type="email"
+                      placeholder={t("widget.emailPlaceholder")}
+                      value={contactEmail}
+                      onChange={(e) => setContactEmail(e.target.value)}
+                      className="mcss-contact-input"
+                      maxLength={254}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSavingContact}
+                      className="mcss-contact-save-btn"
+                    >
+                      {isSavingContact ? t("widget.savingContact") : t("widget.saveContact")}
+                    </button>
+                  </form>
+                )}
+              </>
+            ) : (
+              <span style={{ color: "#059669" }}>✓ {t("widget.contactSaved")}</span>
+            )}
+          </div>
+
+          {/* Messages timeline */}
+          <div
+            role="log"
+            aria-live="polite"
+            className="mcss-messages-container"
+          >
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`mcss-message ${msg.sender_type}`}
+              >
+                {msg.sender_type === "staff" && (
+                  <span className="mcss-sender-label">Support Agent</span>
+                )}
+                {msg.sender_type === "assistant" && (
+                  <span className="mcss-sender-label">{t("widget.title")}</span>
+                )}
+
+                <div className="mcss-bubble">
+                  {renderMessageContent(msg.content)}
+                </div>
+
+                {/* Source chips if any */}
+                {msg.sender_type === "assistant" &&
+                  (msg as any).metadata?.cited_chunk_ids &&
+                  (msg as any).metadata.cited_chunk_ids.length > 0 && (
+                    <div className="mcss-source-chips">
+                      {(msg as any).metadata.cited_chunk_ids.map(
+                        (chunkId: string, idx: number) => (
+                          <span key={chunkId || idx} className="mcss-source-chip">
+                            Source {idx + 1}
+                          </span>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                <span className="mcss-time-label">
+                  {new Date(msg.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Footer composer */}
+          <footer className="mcss-footer">
+            {errorMessage && (
+              <div
+                role="alert"
+                style={{ color: "#dc2626", fontSize: "11px", marginBottom: "6px" }}
+              >
+                {errorMessage}
+              </div>
+            )}
+
+            {isClosed ? (
+              <div className="mcss-closed-box">
+                {t("widget.closedNotice")}
+              </div>
+            ) : (
+              <form onSubmit={handleSendMessage} className="mcss-form">
+                <textarea
+                  ref={textareaRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  disabled={isSending}
+                  placeholder={t("widget.placeholder")}
+                  rows={1}
+                  maxLength={2000}
+                  className="mcss-input"
+                  aria-label={t("widget.placeholder")}
+                />
+                <button
+                  type="submit"
+                  disabled={isSending || !inputValue.trim()}
+                  className="mcss-send-btn"
+                >
+                  {isSending ? t("widget.sending") : t("widget.send")}
+                </button>
+              </form>
+            )}
+          </footer>
         </div>
       )}
-
-      <form onSubmit={sendMessage} className="p-4 border-t border-gray-200">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-full text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            disabled={loading}
-            aria-label="Message"
-          />
-          <button
-            type="submit"
-            disabled={loading || !inputValue.trim()}
-            className="px-4 py-2 rounded-full text-white font-medium text-sm"
-            style={{ backgroundColor: accentColor }}
-          >
-            {loading ? "Sending..." : "Send"}
-          </button>
-        </div>
-      </form>
     </div>
   );
 }

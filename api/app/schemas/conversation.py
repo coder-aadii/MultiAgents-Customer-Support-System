@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.models.conversation import ConversationStatus
 from app.schemas.user import UserResponse
+from app.schemas.visitor import VisitorResponse
 
 
 class ConversationResponse(BaseModel):
@@ -19,6 +20,7 @@ class ConversationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     assignee: UserResponse | None = None
+    visitor: VisitorResponse | None = None
 
     model_config = {"from_attributes": True}
 

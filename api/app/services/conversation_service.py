@@ -48,7 +48,10 @@ async def list_conversations(
     cursor: str | None = None,
     limit: int = 25,
 ) -> PaginatedResponse[ConversationResponse]:
-    query = select(Conversation).options(selectinload(Conversation.assignee))
+    query = select(Conversation).options(
+        selectinload(Conversation.assignee),
+        selectinload(Conversation.visitor),
+    )
 
     if status:
         query = query.where(Conversation.status == status)
@@ -88,7 +91,10 @@ async def get_conversation(
 ) -> ConversationDetailResponse:
     query = (
         select(Conversation)
-        .options(selectinload(Conversation.assignee))
+        .options(
+            selectinload(Conversation.assignee),
+            selectinload(Conversation.visitor),
+        )
         .where(Conversation.id == conversation_id)
     )
     result = await db.execute(query)
@@ -106,7 +112,10 @@ async def claim_conversation(
 ) -> ConversationResponse:
     query = (
         select(Conversation)
-        .options(selectinload(Conversation.assignee))
+        .options(
+            selectinload(Conversation.assignee),
+            selectinload(Conversation.visitor),
+        )
         .where(Conversation.id == conversation_id)
         .with_for_update()
     )
@@ -158,7 +167,10 @@ async def close_conversation(
 ) -> ConversationResponse:
     query = (
         select(Conversation)
-        .options(selectinload(Conversation.assignee))
+        .options(
+            selectinload(Conversation.assignee),
+            selectinload(Conversation.visitor),
+        )
         .where(Conversation.id == conversation_id)
         .with_for_update()
     )
@@ -287,7 +299,7 @@ async def list_messages(
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = None
-    if has_more and items:
+    if items:
         last = items[-1]
         next_cursor = encode_cursor(last.created_at, last.id)
 
@@ -322,7 +334,7 @@ async def list_handoffs(
     has_more = len(rows) > limit
     items = rows[:limit]
     next_cursor = None
-    if has_more and items:
+    if items:
         last = items[-1]
         next_cursor = encode_cursor(last.created_at, last.id)
 

@@ -15,9 +15,10 @@ export default defineConfig(({ command }) => {
     server: {
       host: "0.0.0.0",
       port: 5174,
+      allowedHosts: ["widget", "localhost", "127.0.0.1"],
       proxy: {
         "/api": {
-          target: "http://localhost:8000",
+          target: process.env.VITE_API_PROXY_TARGET || "http://api:8000",
           changeOrigin: true,
         },
       },
@@ -27,7 +28,7 @@ export default defineConfig(({ command }) => {
           outDir: "dist/widget",
           sourcemap: true,
           lib: {
-            entry: path.resolve(__dirname, "src/Widget.tsx"),
+            entry: path.resolve(__dirname, "src/mount.tsx"),
             name: "MCSSWidget",
             fileName: "mcss-widget",
             formats: ["iife"],
@@ -35,6 +36,7 @@ export default defineConfig(({ command }) => {
           rollupOptions: {
             external: [],
             output: {
+              exports: "named",
               globals: {},
             },
           },

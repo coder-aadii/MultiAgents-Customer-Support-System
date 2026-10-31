@@ -283,3 +283,321 @@ async def test_handoff_lifecycle(setup_conversation_env):
         assert claim_h.status_code == 200
         assert claim_h.json()["status"] == "claimed"
         assert claim_h.json()["claimed_by_user_id"] == str(env["staff"].id)
+
+
+# ==============================================================================
+# Sub-phase 2.1 — Polling and Reconciliation Contract Tests
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_polling_canonical_widget_endpoints_and_profile(setup_conversation_env):
+    """Test canonical visitor widget endpoints: /conversation, /messages, /profile."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Create visitor session
+        sess_resp = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        assert sess_resp.status_code == 200
+        v_data = sess_resp.json()
+        v_token = v_data["session_token"]
+        v_conv_id = v_data["conversation_id"]
+
+        # 2. GET /widget/conversation
+        conv_resp = await client.get(
+            "/api/v1/widget/conversation",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert conv_resp.status_code == 200
+        assert conv_resp.json()["id"] == v_conv_id
+        assert conv_resp.json()["status"] == "open"
+
+        # 3. POST /widget/messages (idempotent write)
+        client_msg_id = str(uuid.uuid4())
+        msg_post_resp = await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json={
+                "content": "Hello from canonical widget endpoint",
+                "client_message_id": client_msg_id,
+            },
+        )
+        assert msg_post_resp.status_code == 201
+        msg = msg_post_resp.json()
+        assert msg["content"] == "Hello from canonical widget endpoint"
+        assert msg["sender_type"] == "visitor"
+
+        # 4. GET /widget/messages (polling)
+        msgs_resp = await client.get(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert msgs_resp.status_code == 200
+        items = msgs_resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["id"] == msg["id"]
+        assert msgs_resp.json()["next_cursor"] is not None
+
+        # 5. PATCH /widget/profile
+        profile_resp = await client.patch(
+            "/api/v1/widget/profile",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json={"name": "Jane Visitor", "email": "jane@example.com"},
+        )
+        assert profile_resp.status_code == 200
+        profile_data = profile_resp.json()
+        assert profile_data["name"] == "Jane Visitor"
+        assert profile_data["email"] == "jane@example.com"
+
+
+@pytest.mark.asyncio
+async def test_polling_reconnect_recovery(setup_conversation_env):
+    """Test client reconnect recovery: refetches server data and recovers state."""
+    env = setup_conversation_env
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create session and initial message
+        sess_resp = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        v_token = sess_resp.json()["session_token"]
+        conv_id = sess_resp.json()["conversation_id"]
+
+        # Visitor posts message
+        await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json={"content": "Message before disconnect", "client_message_id": str(uuid.uuid4())},
+        )
+
+        # Staff claims and replies while visitor was "disconnected"
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/claim",
+            headers={"Authorization": f"Bearer {env['staff_token']}"},
+        )
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/messages",
+            headers={"Authorization": f"Bearer {env['staff_token']}"},
+            json={
+                "content": "Staff reply during disconnect",
+                "client_message_id": str(uuid.uuid4()),
+            },
+        )
+
+        # Visitor reconnects / recovers session with bearer token
+        resume_resp = await client.post(
+            "/api/v1/widget/sessions",
+            headers={
+                "Origin": "http://localhost:5174",
+                "Authorization": f"Bearer {v_token}",
+            },
+        )
+        assert resume_resp.status_code == 200
+        assert resume_resp.json()["conversation_id"] == conv_id
+
+        # Visitor refetches conversation detail and all messages
+        detail = await client.get(
+            "/api/v1/widget/conversation",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert detail.status_code == 200
+        assert detail.json()["status"] == "staff_active"
+
+        messages_list = await client.get(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert messages_list.status_code == 200
+        items = messages_list.json()["items"]
+        assert len(items) == 2
+        assert items[0]["sender_type"] == "visitor"
+        assert items[1]["sender_type"] == "staff"
+        assert items[1]["content"] == "Staff reply during disconnect"
+
+
+@pytest.mark.asyncio
+async def test_polling_missed_message_backfill(setup_conversation_env):
+    """Test polling catch-up: polling with last-seen cursor backfills all missed messages in order."""
+    env = setup_conversation_env
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        sess_resp = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        v_token = sess_resp.json()["session_token"]
+        conv_id = sess_resp.json()["conversation_id"]
+
+        # Message 1
+        msg1_res = await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json={"content": "First message", "client_message_id": str(uuid.uuid4())},
+        )
+        assert msg1_res.status_code == 201
+
+        # Visitor polls and stores cursor after Message 1
+        poll1 = await client.get(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert len(poll1.json()["items"]) == 1
+        cursor_after_m1 = poll1.json()["next_cursor"]
+        assert cursor_after_m1 is not None
+
+        # Two messages arrive while visitor is polling-idle
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/claim",
+            headers={"Authorization": f"Bearer {env['staff_token']}"},
+        )
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/messages",
+            headers={"Authorization": f"Bearer {env['staff_token']}"},
+            json={"content": "Backfill message 2", "client_message_id": str(uuid.uuid4())},
+        )
+        await client.post(
+            f"/api/v1/conversations/{conv_id}/messages",
+            headers={"Authorization": f"Bearer {env['staff_token']}"},
+            json={"content": "Backfill message 3", "client_message_id": str(uuid.uuid4())},
+        )
+
+        # Visitor polls with cursor_after_m1
+        backfill_poll = await client.get(
+            f"/api/v1/widget/messages?cursor={cursor_after_m1}",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert backfill_poll.status_code == 200
+        new_items = backfill_poll.json()["items"]
+        assert len(new_items) == 2
+        assert new_items[0]["content"] == "Backfill message 2"
+        assert new_items[1]["content"] == "Backfill message 3"
+
+        # Cursor advances
+        cursor_after_m3 = backfill_poll.json()["next_cursor"]
+        assert cursor_after_m3 is not None
+        assert cursor_after_m3 != cursor_after_m1
+
+        # Next poll returns empty items
+        idle_poll = await client.get(
+            f"/api/v1/widget/messages?cursor={cursor_after_m3}",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert idle_poll.status_code == 200
+        assert len(idle_poll.json()["items"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_polling_duplicate_http_responses(setup_conversation_env):
+    """Test duplicate HTTP response handling: repeated client_message_id returns original without duplicates."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        sess_resp = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        v_token = sess_resp.json()["session_token"]
+
+        c_msg_id = str(uuid.uuid4())
+        payload = {"content": "Idempotent send test", "client_message_id": c_msg_id}
+
+        # Send 1
+        res1 = await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json=payload,
+        )
+        assert res1.status_code == 201
+        m1 = res1.json()
+
+        # Send 2 (duplicate HTTP retry)
+        res2 = await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+            json=payload,
+        )
+        assert res2.status_code in (200, 201)
+        m2 = res2.json()
+
+        assert m1["id"] == m2["id"]
+        assert m1["created_at"] == m2["created_at"]
+        assert m1["client_message_id"] == c_msg_id
+
+        # Verify polling list has exactly 1 message
+        list_res = await client.get(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {v_token}"},
+        )
+        assert len(list_res.json()["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_polling_no_cross_conversation_authorization(setup_conversation_env):
+    """Test strict authorization boundaries: visitor A cannot discover or poll visitor B's data."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create session A
+        sess_a = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        token_a = sess_a.json()["session_token"]
+
+        # Create session B
+        sess_b = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+        )
+        token_b = sess_b.json()["session_token"]
+        conv_b_id = sess_b.json()["conversation_id"]
+
+        # Visitor B posts a private message
+        await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {token_b}"},
+            json={"content": "Visitor B secret message", "client_message_id": str(uuid.uuid4())},
+        )
+
+        # Visitor A attempts to read Visitor B's conversation -> 404 (non-discoverable)
+        cross_conv = await client.get(
+            f"/api/v1/widget/conversations/{conv_b_id}",
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        assert cross_conv.status_code == 404
+
+        # Visitor A attempts to poll Visitor B's messages -> 404
+        cross_msgs = await client.get(
+            f"/api/v1/widget/conversations/{conv_b_id}/messages",
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        assert cross_msgs.status_code == 404
+
+        # Visitor A calling canonical /widget/messages gets only A's messages (0 items)
+        a_msgs = await client.get(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        assert a_msgs.status_code == 200
+        assert len(a_msgs.json()["items"]) == 0
+
+        # Unauthenticated poll -> 401
+        unauth = await client.get("/api/v1/widget/messages")
+        assert unauth.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_polling_no_broker_endpoints():
+    """Verify no push/broker endpoints exist; REST is the authoritative transport."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Test endpoints that do not exist in v1.1 REST architecture
+        res_ws = await client.get("/api/v1/ws")
+        assert res_ws.status_code == 404
+
+        res_events = await client.get("/api/v1/events")
+        assert res_events.status_code == 404
+
+        res_sub = await client.get("/api/v1/subscribe")
+        assert res_sub.status_code == 404

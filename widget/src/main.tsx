@@ -1,13 +1,10 @@
-import ReactDOM from "react-dom/client";
-import Widget from "./Widget";
-import "./index.css";
+import { init } from "./mount";
 
-const config = {
-  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || "/api/v1",
-  position: "bottom-right" as const,
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+
+init({
+  apiBaseUrl,
+  position: "bottom-right",
   accentColor: "#2563eb",
   title: "MCSS Support",
-};
-
-const root = ReactDOM.createRoot(document.getElementById("widget-root")!);
-root.render(<Widget config={config} />);
+});
