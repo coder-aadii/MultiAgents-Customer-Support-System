@@ -398,4 +398,56 @@ This document records significant implementation decisions made during developme
 
 ---
 
+## 2026-11-01: Decoupling Database Row Locks from Assistant Network I/O
+
+**Context:** `handle_assistant_pipeline` held PostgreSQL `SELECT ... FOR UPDATE` row locks across remote LLM and retrieval calls (10–20 seconds), blocking staff take-over (`POST /conversations/{id}/takeover`) and exhausting database connection pools.
+
+**Decisions:**
+- Decoupled remote I/O from database transactions: initial status checks read without row locks.
+- Serialized assistant pipeline execution per conversation using an in-memory `asyncio.Lock` registry (`_conversation_locks`).
+- Performed transactional re-check with `SELECT ... FOR UPDATE` exclusively at Step 6 immediately before saving assistant or handoff messages.
+
+**Rationale:** Allows immediate, non-blocking staff take-over while reliably suppressing in-flight AI answers when staff claims a conversation.
+
+---
+
+## 2026-11-01: Circuit Breaker Error Discrimination and Half-Open Probe Serialization
+
+**Context:** The circuit breaker previously tripped on client 400 Bad Request or validation errors, and permitted concurrent calls during `HALF_OPEN` state.
+
+**Decisions:**
+- Restricted failure counter increments to transient/retryable errors (`is_retryable_error`).
+- Added `_probing: bool` state enforcing strictly one probe call through during `HALF_OPEN`; concurrent calls raise `ProviderCircuitOpenError` until the probe completes.
+
+**Rationale:** Prevents false-positive breaker trips from client mistakes and protects recovering upstream providers from concurrent request surges.
+
+---
+
+## 2026-11-01: Graceful Handoff Fallback on Knowledge Retrieval Failures
+
+**Context:** Unhandled exceptions during `retrieve_knowledge_chunks` caused the assistant pipeline to crash silently, leaving visitors without an answer or handoff ticket.
+
+**Decisions:**
+- Wrapped knowledge retrieval and generation in defensive error-handling blocks.
+- On retrieval or provider failure, the pipeline logs the incident and immediately creates a `HandoffReason.unsupported_request` ticket and posts `HANDOFF_MESSAGE_TEXT` (`"I’m connecting you with our support team so they can help further."`).
+
+**Rationale:** Satisfies Master Specification 8.2 ensuring visitors are never abandoned when infrastructure components fail.
+
+---
+
+## 2026-11-01: MCSS Enterprise Multi-Agent Platform Extension (ADR-005)
+
+**Context:** The user expanded the MCSS roadmap to Phase 5 ("MCSS Enterprise — Universal Multi-Agent Customer Support Platform"), transitioning from a single-tenant knowledge FAQ assistant into an extensible multi-agent support platform capable of retrieving live customer-specific business data (orders, refunds, subscriptions, claims) and executing controlled actions.
+
+**Decisions:**
+- Sequence implementation into 9 dependency-ordered stages (Stages A through I): Reconcile Foundation $\rightarrow$ Customer Identity $\rightarrow$ Tool Gateway $\rightarrow$ Multi-Agent Live Answers $\rightarrow$ Production Connectors $\rightarrow$ Controlled Actions $\rightarrow$ Enterprise Tenancy $\rightarrow$ Omnichannel $\rightarrow$ Production Readiness.
+- Preserve backward-compatibility: Anonymous visitor chat (Level 0) continues to function seamlessly for public FAQ answers.
+- Forbid arbitrary LLM-generated SQL: Customer-specific data access is routed exclusively through a server-side Tool Gateway that injects server-verified customer IDs, preventing cross-customer data leakage.
+- Generalize evidence citations: Expand the generator citation model from knowledge chunk UUIDs to polymorphic `EvidenceRef` references (knowledge chunks + verified business entity records).
+- Keep single-tenant core stable while building customer identity and tool integrations, deferring multi-tenancy database changes to Stage G.
+
+**Rationale:** Allows incremental delivery and rigorous security/isolation testing without breaking the existing verified single-tenant codebase.
+
+---
+
 *Add new decisions above this line. Keep chronological order.*

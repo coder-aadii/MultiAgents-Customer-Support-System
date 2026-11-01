@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     MCSS_ADMIN_PASSWORD: SecretStr = Field(
         default=SecretStr(""), description="Admin password for bootstrap"
     )
+    MCSS_ASSISTANT_ENABLED: bool = Field(
+        default=True, description="Enable controlled assistant pipeline for visitor messages"
+    )
 
     @property
     def DATABASE_URL(self) -> str:

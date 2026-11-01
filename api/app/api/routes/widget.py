@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.rate_limit import rate_limit_visitor_message, rate_limit_widget_session
+from app.config import settings
 from app.database import get_session
 from app.dependencies import get_visitor_session, validate_visitor_conversation
 from app.models.message import SenderType
@@ -19,6 +20,7 @@ from app.schemas.visitor import (
     WidgetSessionRequest,
     WidgetSessionResponse,
 )
+from app.services.assistant_service import handle_assistant_pipeline
 from app.services.conversation_service import get_conversation, list_messages, post_message
 from app.services.visitor_service import create_or_resume_session, update_visitor_profile
 
@@ -89,7 +91,7 @@ async def create_visitor_current_message(
 ) -> MessageResponse:
     request_id = getattr(request.state, "request_id", None)
     rate_limit_visitor_message(session)
-    msg, _ = await post_message(
+    msg, created = await post_message(
         db=db,
         conversation_id=session.conversation_id,
         content=payload.content,
@@ -98,6 +100,15 @@ async def create_visitor_current_message(
         sender_user_id=None,
         request_id=request_id,
     )
+    if created and settings.MCSS_ASSISTANT_ENABLED:
+        try:
+            await handle_assistant_pipeline(
+                db=db,
+                conversation_id=session.conversation_id,
+                visitor_message_content=payload.content,
+            )
+        except Exception:
+            pass
     return msg
 
 
@@ -155,7 +166,7 @@ async def create_visitor_message(
 ) -> MessageResponse:
     request_id = getattr(request.state, "request_id", None)
     rate_limit_visitor_message(session)
-    msg, _ = await post_message(
+    msg, created = await post_message(
         db=db,
         conversation_id=conversation_id,
         content=payload.content,
@@ -164,4 +175,13 @@ async def create_visitor_message(
         sender_user_id=None,
         request_id=request_id,
     )
+    if created and settings.MCSS_ASSISTANT_ENABLED:
+        try:
+            await handle_assistant_pipeline(
+                db=db,
+                conversation_id=conversation_id,
+                visitor_message_content=payload.content,
+            )
+        except Exception:
+            pass
     return msg

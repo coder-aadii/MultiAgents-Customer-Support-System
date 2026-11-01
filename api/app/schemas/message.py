@@ -41,7 +41,11 @@ class MessageResponse(BaseModel):
     sender_type: SenderType
     sender_user_id: uuid.UUID | None
     content: str
-    metadata: dict[str, Any] = Field(default_factory=dict, alias="metadata_json")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias="metadata_json",
+        serialization_alias="metadata",
+    )
     created_at: datetime
 
     model_config = {"from_attributes": True, "populate_by_name": True}

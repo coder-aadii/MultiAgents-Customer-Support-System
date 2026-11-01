@@ -5,12 +5,18 @@ import uuid
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import settings
 from app.database import async_session_factory
 from app.main import app
 from app.models.handoff import Handoff, HandoffReason, HandoffStatus
 from app.models.user import User, UserRole
 from app.security.password import hash_password
 from app.security.tokens import create_access_jwt
+
+
+@pytest.fixture(autouse=True)
+def disable_assistant_for_phase2_conversation_tests(monkeypatch):
+    monkeypatch.setattr(settings, "MCSS_ASSISTANT_ENABLED", False)
 
 
 @pytest.fixture

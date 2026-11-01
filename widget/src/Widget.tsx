@@ -359,15 +359,24 @@ export default function Widget({ config }: { config: WidgetConfig }) {
 
                 {/* Source chips if any */}
                 {msg.sender_type === "assistant" &&
-                  (msg as any).metadata?.cited_chunk_ids &&
-                  (msg as any).metadata.cited_chunk_ids.length > 0 && (
+                  ((msg as any).metadata?.cited_chunk_ids || (msg as any).metadata_json?.cited_chunk_ids) &&
+                  (((msg as any).metadata?.cited_chunk_ids || (msg as any).metadata_json?.cited_chunk_ids).length > 0) && (
                     <div className="mcss-source-chips">
-                      {(msg as any).metadata.cited_chunk_ids.map(
-                        (chunkId: string, idx: number) => (
-                          <span key={chunkId || idx} className="mcss-source-chip">
-                            Source {idx + 1}
-                          </span>
-                        )
+                      {((msg as any).metadata?.cited_chunk_ids || (msg as any).metadata_json?.cited_chunk_ids).map(
+                        (chunkId: string, idx: number) => {
+                          const sources = (msg as any).metadata?.sources || (msg as any).metadata_json?.sources || [];
+                          const matching = sources.find((s: any) => s.chunk_id === chunkId);
+                          const chipLabel = matching?.doc_title || `Source ${idx + 1}`;
+                          return (
+                            <span
+                              key={chunkId || idx}
+                              className="mcss-source-chip"
+                              title={matching?.doc_title ? `${matching.doc_title} (${chunkId})` : undefined}
+                            >
+                              {chipLabel}
+                            </span>
+                          );
+                        }
                       )}
                     </div>
                   )}

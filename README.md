@@ -48,6 +48,68 @@ Admin Browser ── React Console ────┘        │
 - **Widget**: React 18, TypeScript, Vite, Shadow DOM, IIFE bundle
 - **Database**: PostgreSQL 16 with pgvector for semantic search
 
+## E-commerce Integration & How It Works
+
+MCSS functions as an embeddable, AI-grounded customer support plugin for any e-commerce platform (Shopify, WooCommerce, Next.js, or custom storefronts):
+
+```mermaid
+flowchart TD
+    Customer["Store Visitor on Widget"] --> Triage{"MCSS Triage Agent"}
+
+    Triage -->|"FAQ / Policy Question"| RAG["Vector Retrieval (pgvector)"]
+    RAG --> AnswerGen["Grounded Answer Generator"]
+    AnswerGen --> WidgetAnswer["Visitor receives cited answer + source chips"]
+
+    Triage -->|"Order, Refund, Payment, or Human Request"| Handoff["Safe Handoff Protocol"]
+    Handoff --> Queue["Ticket tagged 'Waiting for Staff'"]
+    Queue --> AdminInbox["Admin Inbox Dashboard"]
+    AdminInbox --> StaffTakeover["Staff clicks 'Take over' & resolves"]
+```
+
+### 1. Storefront Embedding (The Customer Surface)
+
+Embed the lightweight widget script in your storefront's layout or theme:
+
+```html
+<!-- Load MCSS Widget from your hosted support domain -->
+<script src="https://support.yourstore.com/mcss-widget.js"></script>
+<script>
+  window.MCSSWidget.init({
+    apiBaseUrl: "https://support.yourstore.com/api/v1",
+    title: "Store Support",
+    accentColor: "#1e40af", // Match store brand color
+    position: "bottom-right"
+  });
+</script>
+```
+
+- **Shadow DOM Isolation:** The widget mounts inside an open Shadow DOM root to guarantee zero CSS collision between the store theme and the chat UI.
+- **REST Polling & Low Overhead:** Uses standard HTTP polling every 3 seconds while active and open; halts completely when closed/hidden. Session credentials are kept in memory only (no tracking cookies).
+
+### 2. Knowledge Base Ingestion (Store Policies)
+
+Support staff upload store documentation via the Admin Web (`/knowledge`):
+- **Shipping & Delivery:** Regional transit times, international duties, carrier tiers.
+- **Returns & Exchanges:** Return windows (e.g., 30-day policy), condition requirements, store credit options.
+- **Sizing & Care Guides:** Product dimensions, warranty terms, washing instructions.
+
+Uploaded `.txt`, `.md`, or text-based `.pdf` files are chunked into ~700-token units, embedded into 1536-dimensional unit vectors, and indexed with PostgreSQL pgvector (HNSW cosine similarity).
+
+### 3. Automated Grounded Answers vs Safe Human Handoff
+
+- **Automated FAQ Answers:** General policy questions (*"What are your international shipping rates?"*) trigger retrieval of top published chunks. The generator returns an answer strictly grounded in the retrieved text with verifiable source citation chips.
+- **Zero Hallucination Order/Refund Handoff:** Account queries, order lookups (*"Where is order #12345?"*), payment issues, refund requests, or explicit human requests (*"Talk to an agent"*) bypass the generator and trigger an immediate safe handoff:
+  > *"I’m connecting you with our support team so they can help further."*
+
+### 4. Staff Takeover & Resolution
+
+1. Tickets requiring human action appear in the **"Waiting for staff"** queue in the Admin Inbox (`/inbox`).
+2. An agent clicks **"Take over"**:
+   - Status updates to `staff_active`.
+   - **Safety Invariant:** All further AI model calls are permanently silenced for this ticket to prevent conflicting automated responses.
+3. The agent looks up the order in your e-commerce platform (Shopify/WooCommerce admin) and replies directly in the chat.
+4. The visitor receives real-time staff replies labeled **"Support Agent"**.
+
 ## Development
 
 ### Prerequisites

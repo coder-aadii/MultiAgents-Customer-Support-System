@@ -581,14 +581,21 @@ export default function Inbox() {
                         {msg.sender_type === "assistant" && msg.metadata && (
                           <div className="mt-2 pt-2 border-t border-purple-200 flex flex-wrap items-center gap-1.5">
                             {msg.metadata.cited_chunk_ids &&
-                              msg.metadata.cited_chunk_ids.map((chunkId, idx) => (
-                                <span
-                                  key={chunkId || idx}
-                                  className="px-2 py-0.5 text-xs bg-purple-200 text-purple-800 rounded font-medium"
-                                >
-                                  Source {idx + 1}
-                                </span>
-                              ))}
+                              msg.metadata.cited_chunk_ids.map((chunkId, idx) => {
+                                const matching = (msg.metadata?.sources as any[])?.find(
+                                  (s: any) => s.chunk_id === chunkId
+                                );
+                                const chipLabel = matching?.doc_title || `Source ${idx + 1}`;
+                                return (
+                                  <span
+                                    key={chunkId || idx}
+                                    className="px-2 py-0.5 text-xs bg-purple-200 text-purple-800 rounded font-medium"
+                                    title={matching?.doc_title ? `${matching.doc_title} (${chunkId})` : undefined}
+                                  >
+                                    {chipLabel}
+                                  </span>
+                                );
+                              })}
                             {msg.metadata.confidence !== undefined && (
                               <span className="text-xs text-purple-700 ml-auto font-mono">
                                 {t("inbox.confidence")}: {(msg.metadata.confidence * 100).toFixed(0)}%

@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from typing import Any
+
+from sqlalchemy import and_, asc, desc, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.audit_event import ActorType, AuditEvent
+from app.models.conversation import Conversation, ConversationStatus
+from app.models.message import Message, SenderType
+from app.prompts.classifier import CLASSIFIER_SYSTEM_PROMPT
+from app.providers import LLMMessage, LLMProvider, LLMRequest, get_llm_provider
+from app.schemas.assistant import TriageAction, TriageReason, TriageResult
+
+logger = logging.getLogger("mcss.assistant.triage")
+
+MAX_TRIAGE_HISTORY_MESSAGES = 6
+MAX_TRIAGE_HISTORY_CHARS = 2000
+MAX_CURRENT_MESSAGE_CHARS = 1000
+
+
+async def classify_message(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    current_message: str,
+    llm_provider: LLMProvider | None = None,
+) -> TriageResult | None:
+    """Classify visitor message into answer, clarify, or handoff.
+
+    Invariants:
+    1. NEVER calls LLM if conversation is staff_active or closed.
+    2. Constructs input strictly from visitor and assistant history (excludes internal notes).
+    3. Caps history and input length.
+    4. Parses through strict Pydantic schema; any unknown action or malformed output defaults to handoff.
+    5. Persists an audit event with sanitized classification reason and provider metadata (never raw prompt).
+    """
+    # 1. State check
+    conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
+    conv_res = await db.execute(conv_stmt)
+    conv = conv_res.scalar_one_or_none()
+    if not conv:
+        return None
+
+    if conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        logger.info(
+            "Skipping triage: conversation %s status is '%s'",
+            conversation_id,
+            conv.status.value,
+        )
+        return None
+
+    # 2. Fetch bounded conversation history (excluding staff notes and system messages)
+    hist_stmt = (
+        select(Message)
+        .where(
+            Message.conversation_id == conversation_id,
+            Message.sender_type.in_([SenderType.visitor, SenderType.assistant]),
+        )
+        .order_by(desc(Message.created_at), desc(Message.id))
+        .limit(MAX_TRIAGE_HISTORY_MESSAGES)
+    )
+    hist_res = await db.execute(hist_stmt)
+    history_messages = list(reversed(hist_res.scalars().all()))
+
+    # Build prompt messages
+    llm_messages: list[LLMMessage] = [
+        LLMMessage(role="system", content=CLASSIFIER_SYSTEM_PROMPT.strip())
+    ]
+
+    total_chars = 0
+    bounded_history: list[LLMMessage] = []
+    for msg in reversed(history_messages):
+        content = msg.content.strip()
+        if total_chars + len(content) > MAX_TRIAGE_HISTORY_CHARS and bounded_history:
+            break
+        role = "user" if msg.sender_type == SenderType.visitor else "assistant"
+        bounded_history.insert(0, LLMMessage(role=role, content=content))
+        total_chars += len(content)
+
+    llm_messages.extend(bounded_history)
+
+    # Add current message (bounded)
+    bounded_current = current_message.strip()[:MAX_CURRENT_MESSAGE_CHARS]
+    # Only append if not already identical to the last message in bounded history
+    if not (bounded_history and bounded_history[-1].role == "user" and bounded_history[-1].content == bounded_current):
+        llm_messages.append(LLMMessage(role="user", content=bounded_current))
+
+    # 3. Provider call
+    provider = llm_provider or get_llm_provider()
+    request = LLMRequest(
+        messages=llm_messages,
+        temperature=0.0,
+        max_tokens=120,
+        response_format={"type": "json_object"},
+        timeout=10.0,
+    )
+
+    provider_metadata: dict[str, Any] = {}
+    try:
+        response = await provider.chat_complete(request)
+        provider_metadata = {
+            "model": response.model,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.total_tokens,
+        }
+
+        # 4. Strict Schema Parsing
+        raw_data = json.loads(response.content)
+        action_str = str(raw_data.get("action", "")).strip().lower()
+
+        if action_str not in (TriageAction.answer.value, TriageAction.clarify.value, TriageAction.handoff.value):
+            triage_result = TriageResult.fallback_handoff(reason="unknown_action_fallback")
+        else:
+            triage_result = TriageResult(
+                action=TriageAction(action_str),
+                reason=str(raw_data.get("reason", "unknown"))[:120],
+            )
+
+    except Exception as exc:
+        logger.warning(
+            "Triage LLM call or parsing failed for conversation %s: %s; falling back to handoff",
+            conversation_id,
+            type(exc).__name__,
+        )
+        provider_metadata["error"] = type(exc).__name__
+        triage_result = TriageResult.fallback_handoff(reason="provider_or_parse_failure")
+
+    # 5. Persist audit decision record (sanitized; never raw prompt)
+    audit = AuditEvent(
+        actor_type=ActorType.system,
+        actor_id=None,
+        event_type="assistant.triage",
+        resource_type="conversation",
+        resource_id=conversation_id,
+        metadata_json={
+            "action": triage_result.action.value,
+            "reason": triage_result.reason,
+            "provider_metadata": provider_metadata,
+        },
+    )
+    db.add(audit)
+    await db.flush()
+
+    return triage_result
+
