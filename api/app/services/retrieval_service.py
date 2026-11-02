@@ -10,6 +10,7 @@ from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_document import DocumentStatus, KnowledgeDocument
 from app.providers import get_embedding_provider
 from app.schemas.retrieval import RetrievalDebugResponse, RetrievalResponse, RetrievalResultItem
+from app.tenancy.context import TenantContext
 
 MAX_PROMPT_CONTEXT_CHARS = 4500
 MAX_RETRIEVAL_CHUNKS = 5
@@ -21,6 +22,7 @@ async def retrieve_knowledge_chunks(
     limit: int = 5,
     min_score: float | None = None,
     is_debug: bool = False,
+    organization_id: uuid.UUID | None = None,
 ) -> RetrievalResponse | RetrievalDebugResponse:
     """Execute vector cosine similarity retrieval against published documents only.
 
@@ -44,6 +46,8 @@ async def retrieve_knowledge_chunks(
     # Similarity = 1.0 - distance
     distance_expr = KnowledgeChunk.embedding.cosine_distance(query_vector)
 
+    effective_org_id = organization_id or TenantContext.get_tenant_id()
+
     # Published documents query with HNSW-optimized top-k limit (removes massive doc_full_content from initial scan)
     stmt = (
         select(
@@ -55,7 +59,11 @@ async def retrieve_knowledge_chunks(
             distance_expr.label("distance"),
         )
         .join(KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id)
-        .where(KnowledgeDocument.status == DocumentStatus.published)
+        .where(
+            KnowledgeDocument.status == DocumentStatus.published,
+            KnowledgeDocument.organization_id == effective_org_id,
+            KnowledgeChunk.organization_id == effective_org_id,
+        )
         .order_by(
             distance_expr.asc(),
             KnowledgeDocument.id.asc(),

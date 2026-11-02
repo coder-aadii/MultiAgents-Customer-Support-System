@@ -22,7 +22,7 @@ from app.models import (  # noqa: F401
     WidgetSettings,
 )
 
-EXPECTED_MIGRATION_REVISION = "0007_enterprise_connectors"
+EXPECTED_MIGRATION_REVISION = "0013_support_operations"
 
 engine = create_async_engine(
     settings.DATABASE_URL,

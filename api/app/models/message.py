@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.tenancy.context import TenantContext
 
 if TYPE_CHECKING:
     from app.models.conversation import Conversation
@@ -27,6 +28,13 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE", name="fk_messages_organization_id"),
+        default=lambda: TenantContext.get_tenant_id(),
+        nullable=False,
+        index=True,
+    )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("conversations.id", ondelete="CASCADE", name="fk_messages_conversation_id"),
@@ -42,6 +50,18 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, nullable=False
+    )
+    channel_type: Mapped[str] = mapped_column(
+        Text, default="widget", nullable=False
+    )
+    external_message_id: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )
+    delivery_status: Mapped[str] = mapped_column(
+        Text, default="delivered", nullable=False
+    )
+    delivery_error_code: Mapped[str | None] = mapped_column(
+        Text, nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False

@@ -22,8 +22,12 @@ def generate_opaque_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-def create_access_jwt(subject: str, role: str) -> str:
-    """Create short-lived access JWT containing only sub, role, iat, exp, and jti."""
+def create_access_jwt(
+    subject: str,
+    role: str,
+    additional_claims: dict[str, Any] | None = None,
+) -> str:
+    """Create short-lived access JWT containing sub, role, iat, exp, jti, and optional claims."""
     now = datetime.now(UTC)
     expires_at = now + timedelta(minutes=settings.JWT_ACCESS_MINUTES)
 
@@ -34,6 +38,8 @@ def create_access_jwt(subject: str, role: str) -> str:
         "exp": int(expires_at.timestamp()),
         "jti": str(uuid.uuid4()),
     }
+    if additional_claims:
+        payload.update(additional_claims)
 
     return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
 

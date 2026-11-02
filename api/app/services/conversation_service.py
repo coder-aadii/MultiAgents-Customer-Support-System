@@ -19,6 +19,8 @@ from app.schemas.common import PaginatedResponse
 from app.schemas.conversation import ConversationDetailResponse, ConversationResponse
 from app.schemas.handoff import HandoffResponse
 from app.schemas.message import MessageResponse
+from app.tenancy.context import TenantContext
+from app.tenancy.filter import TenantQueryScoper
 
 
 async def record_audit(
@@ -52,6 +54,7 @@ async def list_conversations(
         selectinload(Conversation.assignee),
         selectinload(Conversation.visitor),
     )
+    query = TenantQueryScoper.apply_scope(query, Conversation)
 
     if status:
         query = query.where(Conversation.status == status)
@@ -97,6 +100,7 @@ async def get_conversation(
         )
         .where(Conversation.id == conversation_id)
     )
+    query = TenantQueryScoper.apply_scope(query, Conversation)
     result = await db.execute(query)
     conv = result.scalar_one_or_none()
     if not conv:
@@ -119,6 +123,7 @@ async def claim_conversation(
         .where(Conversation.id == conversation_id)
         .with_for_update()
     )
+    query = TenantQueryScoper.apply_scope(query, Conversation)
     result = await db.execute(query)
     conv = result.scalar_one_or_none()
     if not conv:
@@ -174,6 +179,7 @@ async def close_conversation(
         .where(Conversation.id == conversation_id)
         .with_for_update()
     )
+    query = TenantQueryScoper.apply_scope(query, Conversation)
     result = await db.execute(query)
     conv = result.scalar_one_or_none()
     if not conv:
@@ -226,6 +232,7 @@ async def post_message(
     """Atomically create a message with idempotency on (conversation_id, client_message_id)."""
     # 1. Check conversation status with lock
     query = select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+    query = TenantQueryScoper.apply_scope(query, Conversation)
     result = await db.execute(query)
     conv = result.scalar_one_or_none()
     if not conv:
@@ -271,6 +278,14 @@ async def post_message(
     await db.commit()
     await db.refresh(new_message)
 
+    # Dispatch outbound message to external channel if applicable
+    if sender_type in (SenderType.staff, SenderType.assistant):
+        try:
+            from app.channels.registry import default_channel_registry
+            await default_channel_registry.dispatch_outbound(db, conversation_id, new_message)
+        except Exception as e:
+            logger.warning("Failed outbound channel dispatch", error=str(e), conversation_id=str(conversation_id))
+
     return MessageResponse.model_validate(new_message), True
 
 
@@ -281,6 +296,7 @@ async def list_messages(
     limit: int = 50,
 ) -> PaginatedResponse[MessageResponse]:
     query = select(Message).where(Message.conversation_id == conversation_id)
+    query = TenantQueryScoper.apply_scope(query, Message)
 
     if cursor:
         dt, item_id = decode_cursor(cursor)
@@ -316,7 +332,12 @@ async def list_handoffs(
     cursor: str | None = None,
     limit: int = 25,
 ) -> PaginatedResponse[HandoffResponse]:
-    query = select(Handoff).where(Handoff.status == status)
+    query = (
+        select(Handoff)
+        .join(Conversation, Conversation.id == Handoff.conversation_id)
+        .where(Handoff.status == status)
+    )
+    query = TenantQueryScoper.apply_scope(query, Conversation)
 
     if cursor:
         dt, item_id = decode_cursor(cursor)
@@ -351,7 +372,13 @@ async def claim_handoff(
     staff_user: User,
     request_id: str | None = None,
 ) -> HandoffResponse:
-    query = select(Handoff).where(Handoff.id == handoff_id).with_for_update()
+    query = (
+        select(Handoff)
+        .join(Conversation, Conversation.id == Handoff.conversation_id)
+        .where(Handoff.id == handoff_id)
+        .with_for_update()
+    )
+    query = TenantQueryScoper.apply_scope(query, Conversation)
     result = await db.execute(query)
     handoff = result.scalar_one_or_none()
     if not handoff:

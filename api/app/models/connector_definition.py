@@ -5,11 +5,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+from app.tenancy.context import TenantContext
 
 
 class ConnectorType(str, enum.Enum):
@@ -32,6 +33,13 @@ class ConnectorDefinition(Base):
     __tablename__ = "connector_definitions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE", name="fk_connector_definitions_organization_id"),
+        default=lambda: TenantContext.get_tenant_id(),
+        nullable=False,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     connector_type: Mapped[str] = mapped_column(String(32), nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

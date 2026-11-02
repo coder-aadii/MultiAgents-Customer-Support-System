@@ -20,6 +20,7 @@ from app.models.knowledge_document import (
 from app.schemas.common import PaginatedResponse
 from app.schemas.knowledge import ChunkResponse, DocumentDetailResponse, DocumentResponse
 from app.services.ingestion_service import process_document_ingestion
+from app.tenancy.filter import TenantQueryScoper
 
 
 async def create_document(
@@ -78,6 +79,7 @@ async def list_documents(
         KnowledgeDocument,
         func.count(KnowledgeChunk.id).label("chunk_count"),
     ).outerjoin(KnowledgeChunk, KnowledgeChunk.document_id == KnowledgeDocument.id)
+    query = TenantQueryScoper.apply_scope(query, KnowledgeDocument)
 
     if status:
         query = query.where(KnowledgeDocument.status == status)
@@ -139,6 +141,7 @@ async def get_document_detail(db: AsyncSession, document_id: uuid.UUID) -> Docum
         .where(KnowledgeDocument.id == document_id)
         .options(selectinload(KnowledgeDocument.chunks))
     )
+    stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     if not doc:
@@ -182,6 +185,7 @@ async def update_document(
 ) -> KnowledgeDocument:
     """Update title or content for a draft document. Disallows editing published/archived."""
     stmt = select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+    stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     if not doc:
@@ -236,6 +240,7 @@ async def delete_document(
 ) -> None:
     """Delete draft document. Rejects deleting published or archived documents."""
     stmt = select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+    stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     if not doc:
@@ -280,6 +285,7 @@ async def publish_document(
         .where(KnowledgeDocument.id == document_id)
         .options(selectinload(KnowledgeDocument.chunks))
     )
+    stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     if not doc:
@@ -332,6 +338,7 @@ async def archive_document(
 ) -> KnowledgeDocument:
     """Archive a published document. Transitions status from published -> archived."""
     stmt = select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+    stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     if not doc:
@@ -369,6 +376,7 @@ async def retry_document_ingestion(
 ) -> KnowledgeDocument:
     """Explicit retry of a failed ingestion on a draft document."""
     stmt = select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+    stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
     doc = result.scalar_one_or_none()
     if not doc:

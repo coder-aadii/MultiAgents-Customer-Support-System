@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+from app.tenancy.context import TenantContext
 
 if TYPE_CHECKING:
     from app.models.conversation import Conversation
@@ -19,6 +20,13 @@ class VisitorSession(Base):
     __tablename__ = "visitor_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE", name="fk_visitor_sessions_organization_id"),
+        default=lambda: TenantContext.get_tenant_id(),
+        nullable=False,
+        index=True,
+    )
     visitor_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("visitors.id", ondelete="CASCADE", name="fk_visitor_sessions_visitor_id"),

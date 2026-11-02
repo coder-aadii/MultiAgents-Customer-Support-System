@@ -194,6 +194,12 @@ async def process_claimed_job(
                 job.status = AssistantJobStatus.discarded.value
             else:
                 job.status = AssistantJobStatus.completed.value
+                # Dispatch outbound channel reply if non-widget channel
+                try:
+                    from app.channels.registry import default_channel_registry
+                    await default_channel_registry.dispatch_outbound(db, conversation_id, result_message)
+                except Exception as out_err:
+                    logger.warning("Failed outbound dispatch for job %s: %s", job_id, out_err)
             job.completed_at = now
             await db.commit()
             return True

@@ -41,6 +41,11 @@ export interface Conversation {
   updated_at: string;
   assignee?: User | null;
   visitor?: VisitorInfo | null;
+  priority?: "low" | "normal" | "high" | "urgent";
+  sla_breached?: boolean;
+  channel_type?: string;
+  assigned_team_id?: string | null;
+  assigned_agent_id?: string | null;
 }
 
 export interface Message {
@@ -386,6 +391,116 @@ export const knowledgeApi = {
     min_score?: number;
   }): Promise<RetrievalDebugResponse> => {
     const res = await apiClient.post<RetrievalDebugResponse>("/knowledge/retrieve/debug", data);
+    return res.data;
+  },
+};
+
+export interface BusinessActionItem {
+  id: string;
+  conversation_id: string;
+  customer_id: string;
+  action_name: string;
+  risk_level: "low" | "medium" | "high" | "critical";
+  status: string;
+  idempotency_key: string;
+  payload_json: Record<string, any>;
+  result_json: Record<string, any> | null;
+  summary_message: string;
+  required_confirmation_phrase: string;
+  expires_at: string;
+  confirmed_at: string | null;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  review_notes: string | null;
+  execution_attempts: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const actionsApi = {
+  listPending: async (risk_level?: string): Promise<BusinessActionItem[]> => {
+    const res = await apiClient.get<BusinessActionItem[]>("/admin/actions/pending", {
+      params: risk_level ? { risk_level } : undefined,
+    });
+    return res.data;
+  },
+  approve: async (id: string, notes?: string): Promise<any> => {
+    const res = await apiClient.post(`/admin/actions/${id}/approve`, { notes });
+    return res.data;
+  },
+  reject: async (id: string, reason: string): Promise<BusinessActionItem> => {
+    const res = await apiClient.post<BusinessActionItem>(`/admin/actions/${id}/reject`, { reason });
+    return res.data;
+  },
+};
+
+export interface ConversationNote {
+  id: string;
+  conversation_id: string;
+  author_user_id: string;
+  note_text: string;
+  is_whisper: boolean;
+  created_at: string;
+}
+
+export interface AgentRosterItem {
+  id: string;
+  display_name: string;
+  email: string;
+  role: "admin" | "staff";
+  presence: "online" | "busy" | "away" | "offline";
+  active_chats: number;
+  teams: string[];
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  has_more: boolean;
+}
+
+export const operationsApi = {
+  listAgents: async (params?: { limit?: number; offset?: number }): Promise<AgentRosterItem[] | PaginatedResponse<AgentRosterItem>> => {
+    const res = await apiClient.get<AgentRosterItem[] | PaginatedResponse<AgentRosterItem>>("/admin/operations/agents", {
+      params,
+    });
+    return res.data;
+  },
+  listNotes: async (conversationId: string): Promise<ConversationNote[]> => {
+    const res = await apiClient.get<ConversationNote[]>(`/conversations/${conversationId}/notes`);
+    return res.data;
+  },
+  addNote: async (
+    conversationId: string,
+    noteText: string,
+    isWhisper = false
+  ): Promise<ConversationNote> => {
+    const res = await apiClient.post<ConversationNote>(`/conversations/${conversationId}/notes`, {
+      note_text: noteText,
+      is_whisper: isWhisper,
+    });
+    return res.data;
+  },
+  getRealtimeAnalytics: async (): Promise<any> => {
+    const res = await apiClient.get("/admin/analytics/realtime");
+    return res.data;
+  },
+  getMetrics: async (): Promise<any> => {
+    const res = await apiClient.get("/admin/analytics/metrics");
+    return res.data;
+  },
+  listTeams: async (): Promise<any[]> => {
+    const res = await apiClient.get("/admin/operations/teams");
+    return res.data;
+  },
+  reassignConversation: async (
+    conversationId: string,
+    payload: { team_id?: string; agent_id?: string }
+  ): Promise<any> => {
+    const res = await apiClient.post(
+      `/admin/operations/conversations/${conversationId}/assign`,
+      payload
+    );
     return res.data;
   },
 };

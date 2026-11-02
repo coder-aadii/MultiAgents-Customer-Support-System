@@ -3,6 +3,8 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Inbox from "./pages/Inbox";
+import Operations from "./pages/Operations";
+import PendingActions from "./pages/PendingActions";
 import Knowledge from "./pages/Knowledge";
 import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
@@ -23,6 +25,22 @@ export default function App() {
           element={
             <ProtectedRoute title="Inbox">
               <Inbox />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/operations"
+          element={
+            <ProtectedRoute title="Support Operations & SLA">
+              <Operations />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/actions"
+          element={
+            <ProtectedRoute title="Supervisor Action Queue">
+              <PendingActions />
             </ProtectedRoute>
           }
         />

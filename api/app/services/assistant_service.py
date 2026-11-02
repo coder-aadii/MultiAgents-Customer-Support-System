@@ -11,12 +11,17 @@ from datetime import UTC, datetime
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.actions.executor import ActionExecutor
+from app.actions.idempotency import IdempotencyEngine
+from app.actions.policy import ActionPolicyGate, ConfirmationDecision
+from app.actions.registry import ActionRegistry
 from app.config import settings
 from app.gateway import (
     EntityNotFoundError,
     EntityRecord,
     default_tool_gateway,
 )
+from app.models.action_audit_journal import ActionActorType
 from app.models.audit_event import ActorType
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.handoff import Handoff, HandoffReason, HandoffStatus
@@ -86,6 +91,27 @@ async def create_or_reuse_handoff(
         )
         db.add(handoff)
         await db.flush()
+
+        # Automatic queue routing: if organization has active support teams, route conversation to available agent
+        try:
+            from app.models.support_team import SupportTeam
+            from app.operations.routing import CapacityRoutingEngine
+            conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
+            c_res = await db.execute(conv_stmt)
+            conv = c_res.scalar_one_or_none()
+            if conv:
+                team_stmt = select(SupportTeam).where(SupportTeam.organization_id == conv.organization_id).order_by(SupportTeam.created_at.asc()).limit(1)
+                t_res = await db.execute(team_stmt)
+                team = t_res.scalar_one_or_none()
+                if team:
+                    assigned_agent = await CapacityRoutingEngine.route_conversation(db, conversation_id, team.id)
+                    if assigned_agent:
+                        handoff.status = HandoffStatus.claimed
+                        handoff.claimed_by_user_id = assigned_agent
+                        handoff.claimed_at = datetime.now(UTC)
+                        await db.flush()
+        except Exception as e:
+            logger.warning("Auto-routing handoff failed: %s", e)
     return handoff
 
 
@@ -760,6 +786,178 @@ async def handle_assistant_pipeline(
             return None
 
         now = datetime.now(UTC)
+
+        # Step 1.5: Controlled Action Confirmation Interceptor
+        sess_stmt = (
+            select(VisitorSession)
+            .where(
+                VisitorSession.conversation_id == conversation_id,
+                VisitorSession.revoked_at.is_(None),
+                VisitorSession.expires_at > now,
+            )
+            .order_by(desc(VisitorSession.created_at))
+            .limit(1)
+        )
+        sess_res = await db.execute(sess_stmt)
+        session = sess_res.scalar_one_or_none()
+
+        if session and session.is_customer_authenticated and session.verified_customer_id:
+            eval_res = await ActionPolicyGate.evaluate_customer_reply(
+                db=db,
+                conversation_id=conversation_id,
+                customer_id=session.verified_customer_id,
+                message_content=visitor_message_content,
+            )
+            if eval_res.decision != ConfirmationDecision.NO_ACTIVE_ACTION:
+                # Re-check conversation state with lock
+                recheck = await db.execute(
+                    select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+                )
+                active_conv = recheck.scalar_one_or_none()
+                if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+                    await db.commit()
+                    return None
+
+                active_conv.last_message_at = now
+                active_conv.updated_at = now
+
+                if eval_res.decision == ConfirmationDecision.CONFIRMED:
+                    if eval_res.action.status == "executing":
+                        exec_res = await ActionExecutor.execute_action(
+                            db=db,
+                            action_id=eval_res.action.id,
+                            actor_type=ActionActorType.customer,
+                            actor_id=session.verified_customer_id,
+                        )
+                        msg_text = exec_res.message
+                    else:
+                        # Escalated to supervisor review
+                        msg_text = eval_res.response_message or "Your request has been submitted for supervisor review."
+                else:
+                    msg_text = eval_res.response_message or "Action updated."
+
+                action_msg = Message(
+                    conversation_id=conversation_id,
+                    client_message_id=uuid.uuid4(),
+                    sender_type=SenderType.assistant,
+                    content=msg_text,
+                    metadata_json={
+                        "action": "controlled_business_action",
+                        "decision": eval_res.decision.value,
+                        "action_id": str(eval_res.action.id) if eval_res.action else None,
+                    },
+                    created_at=now,
+                )
+                db.add(action_msg)
+                await db.commit()
+                return action_msg
+
+        # Step 1.6: Intent-to-Draft Interceptor for Controlled Business Actions
+        order_cancel_pattern = re.search(
+            r"\bcancel\b.*\b(ORD-[0-9a-fA-F]{3,32})\b|\b(ORD-[0-9a-fA-F]{3,32})\b.*\bcancel\b",
+            visitor_message_content,
+            re.IGNORECASE,
+        )
+        if order_cancel_pattern:
+            if session and session.is_customer_authenticated and session.verified_customer_id:
+                order_id = (order_cancel_pattern.group(1) or order_cancel_pattern.group(2)).upper()
+                action_def = ActionRegistry.get("cancel_order")
+                if action_def:
+                    valid, reason, validated_params = await action_def.validate_preconditions(
+                        db=db,
+                        conversation_id=conversation_id,
+                        customer_id=session.verified_customer_id,
+                        parameters={"order_id": order_id},
+                    )
+                    if not valid:
+                        active_conv = (
+                            await db.execute(
+                                select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+                            )
+                        ).scalar_one_or_none()
+                        if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
+                            active_conv.last_message_at = now
+                            active_conv.updated_at = now
+                            fail_msg = Message(
+                                conversation_id=conversation_id,
+                                client_message_id=uuid.uuid4(),
+                                sender_type=SenderType.assistant,
+                                content=reason,
+                                metadata_json={"action": "precondition_failed", "order_id": order_id},
+                                created_at=now,
+                            )
+                            db.add(fail_msg)
+                            await db.commit()
+                            return fail_msg
+                        await db.commit()
+                        return None
+
+                    summary, conf_phrase = action_def.generate_confirmation_phrase(
+                        session.verified_customer_id, validated_params
+                    )
+                    draft, _ = await IdempotencyEngine.create_or_get_draft(
+                        db=db,
+                        conversation_id=conversation_id,
+                        customer_id=session.verified_customer_id,
+                        action_name=action_def.name,
+                        risk_level=action_def.risk_level,
+                        summary_message=summary,
+                        required_confirmation_phrase=conf_phrase,
+                        payload=validated_params,
+                    )
+
+                    active_conv = (
+                        await db.execute(
+                            select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+                        )
+                    ).scalar_one_or_none()
+                    if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
+                        challenge_prompt = (
+                            f"Canceling order {order_id} cannot be undone. "
+                            f"Reply '{conf_phrase}' to proceed, or CANCEL to abort."
+                        )
+                        active_conv.last_message_at = now
+                        active_conv.updated_at = now
+                        draft_msg = Message(
+                            conversation_id=conversation_id,
+                            client_message_id=uuid.uuid4(),
+                            sender_type=SenderType.assistant,
+                            content=challenge_prompt,
+                            metadata_json={
+                                "action": "action_draft_created",
+                                "action_id": str(draft.action_id),
+                                "required_phrase": conf_phrase,
+                            },
+                            created_at=now,
+                        )
+                        db.add(draft_msg)
+                        await db.commit()
+                        return draft_msg
+                    await db.commit()
+                    return None
+            else:
+                # Unauthenticated visitor asking for cancellation
+                active_conv = (
+                    await db.execute(
+                        select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
+                    active_conv.last_message_at = now
+                    active_conv.updated_at = now
+                    auth_msg = Message(
+                        conversation_id=conversation_id,
+                        client_message_id=uuid.uuid4(),
+                        sender_type=SenderType.assistant,
+                        content="Please log in to your store account to request order cancellations.",
+                        metadata_json={"action": "clarify", "reason": "authentication_required"},
+                        created_at=now,
+                    )
+                    db.add(auth_msg)
+                    await db.commit()
+                    return auth_msg
+                await db.commit()
+                return None
 
         # Step 2: Triage Classification
         try:

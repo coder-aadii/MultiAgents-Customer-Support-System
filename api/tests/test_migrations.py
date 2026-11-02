@@ -49,6 +49,17 @@ def test_migration_lifecycle(alembic_cfg):
         "assistant_jobs",
         "connector_definitions",
         "connector_audit_logs",
+        "business_actions",
+        "action_audit_journal",
+        "organizations",
+        "organization_memberships",
+        "channel_configurations",
+        "channel_identities",
+        "support_teams",
+        "team_memberships",
+        "conversation_internal_notes",
+        "sla_policies",
+        "csat_surveys",
     }
     for expected in expected_tables:
         assert expected in tables, f"Expected table '{expected}' not found in {tables}"
@@ -115,7 +126,7 @@ def test_migration_lifecycle(alembic_cfg):
 
     # Verify foreign keys and unique constraints
     users_fks = inspector.get_foreign_keys("users")
-    assert len(users_fks) == 0
+    assert any(fk.get("referred_table") == "organizations" for fk in users_fks)
 
     refresh_fks = {
         fk["name"]: fk["referred_table"] for fk in inspector.get_foreign_keys("refresh_tokens")
@@ -177,9 +188,9 @@ def test_migration_lifecycle(alembic_cfg):
         staff_pass_hash = hash_password("StaffPass123!")
         conn.execute(
             text(
-                "INSERT INTO users (id, email, password_hash, display_name, role, is_active, created_at, updated_at) "
-                "VALUES (gen_random_uuid(), 'admin@example.com', :admin_hash, 'Administrator', 'admin', true, now(), now()), "
-                "(gen_random_uuid(), 'staff@example.com', :staff_hash, 'Staff User', 'staff', true, now(), now())"
+                "INSERT INTO users (id, organization_id, email, password_hash, display_name, role, is_active, created_at, updated_at) "
+                "VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001', 'admin@example.com', :admin_hash, 'Administrator', 'admin', true, now(), now()), "
+                "(gen_random_uuid(), '00000000-0000-0000-0000-000000000001', 'staff@example.com', :staff_hash, 'Staff User', 'staff', true, now(), now())"
             ),
             {"admin_hash": admin_pass_hash, "staff_hash": staff_pass_hash},
         )

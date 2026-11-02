@@ -80,6 +80,24 @@ class ConversationClosedError(AppException):
         )
 
 
+class ConflictError(AppException):
+    def __init__(self, message: str = "Resource conflict"):
+        super().__init__(
+            code="conflict",
+            message=message,
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+
+class BadRequestError(AppException):
+    def __init__(self, message: str = "Bad request"):
+        super().__init__(
+            code="bad_request",
+            message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+
 class InternalError(AppException):
     def __init__(self, message: str = "An unexpected error occurred"):
         super().__init__(

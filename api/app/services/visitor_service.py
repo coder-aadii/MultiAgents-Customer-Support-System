@@ -22,6 +22,7 @@ from app.security.customer_auth import (
     VerifiedCustomerIdentity,
 )
 from app.security.tokens import generate_opaque_token, hash_token
+from app.tenancy.context import TenantContext
 
 logger = structlog.get_logger()
 
@@ -248,7 +249,10 @@ async def create_or_resume_session(
     if not visitor_email and verified_identity and verified_identity.email:
         visitor_email = verified_identity.email
 
+    org_id = TenantContext.get_tenant_id()
+
     visitor = Visitor(
+        organization_id=org_id,
         name=name,
         email=visitor_email,
         created_at=now,
@@ -258,6 +262,7 @@ async def create_or_resume_session(
     await db.flush()
 
     conversation = Conversation(
+        organization_id=org_id,
         visitor_id=visitor.id,
         status=ConversationStatus.open,
         last_message_at=now,
@@ -277,6 +282,7 @@ async def create_or_resume_session(
     customer_token_expires_at = verified_identity.expires_at if verified_identity else None
 
     session = VisitorSession(
+        organization_id=org_id,
         visitor_id=visitor.id,
         conversation_id=conversation.id,
         token_hash=session_token_hash,
@@ -303,6 +309,7 @@ async def create_or_resume_session(
             audit_metadata["token_hash_prefix"] = customer_token_hash[:8]
 
     audit = AuditEvent(
+        organization_id=org_id,
         actor_type=ActorType.visitor,
         actor_id=visitor.id,
         event_type="visitor.session.created",

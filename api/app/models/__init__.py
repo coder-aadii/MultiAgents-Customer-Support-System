@@ -1,6 +1,23 @@
+from app.models.action_audit_journal import (
+    ActionActorType,
+    ActionAuditEventType,
+    ActionAuditJournal,
+)
 from app.models.assistant_job import AssistantJob, AssistantJobStatus
 from app.models.audit_event import ActorType, AuditEvent
+from app.models.business_action import (
+    ActionRiskLevel,
+    ActionStatus,
+    BusinessAction,
+)
+from app.models.channel_configuration import ChannelConfiguration
+from app.models.channel_identity import ChannelIdentity
 from app.models.connector_audit_log import ConnectorAuditLog
+from app.models.conversation_note import ConversationInternalNote
+from app.models.csat_survey import CSATSurvey
+from app.models.sla_policy import SLAPolicy
+from app.models.support_team import SupportTeam
+from app.models.team_membership import TeamMembership
 from app.models.connector_definition import (
     AuthType,
     ConnectorDefinition,
@@ -17,6 +34,11 @@ from app.models.knowledge_document import (
     SourceType,
 )
 from app.models.message import Message, SenderType
+from app.models.organization import (
+    Organization,
+    OrganizationMembership,
+    OrgMemberRole,
+)
 from app.models.refresh_token import RefreshToken
 from app.models.user import User, UserRole
 from app.models.visitor import Visitor
@@ -51,4 +73,20 @@ __all__ = [
     "KnowledgeChunk",
     "AuditEvent",
     "ActorType",
+    "BusinessAction",
+    "ActionRiskLevel",
+    "ActionStatus",
+    "ActionAuditJournal",
+    "ActionAuditEventType",
+    "ActionActorType",
+    "Organization",
+    "OrganizationMembership",
+    "OrgMemberRole",
+    "ChannelConfiguration",
+    "ChannelIdentity",
+    "SupportTeam",
+    "TeamMembership",
+    "ConversationInternalNote",
+    "SLAPolicy",
+    "CSATSurvey",
 ]

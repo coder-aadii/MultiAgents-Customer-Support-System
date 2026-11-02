@@ -231,3 +231,137 @@ class BaseEnterpriseConnector(abc.ABC):
                 execution_time_ms=elapsed_ms,
             )
 
+    async def _execute_mutation_internal(
+        self,
+        operation: str,
+        verified_customer_id: str,
+        parameters: dict[str, Any],
+        idempotency_key: str,
+        timeout_seconds: float,
+    ) -> dict[str, Any] | list[dict[str, Any]] | None:
+        """Concrete connector mutation logic implemented by subclasses."""
+        raise NotImplementedError(f"Mutations not supported on connector '{self.connector_name}'")
+
+    async def execute_mutation(
+        self,
+        operation: str,
+        verified_customer_id: str,
+        parameters: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> ConnectorResult:
+        """Executes a strictly authorized state-changing mutation with idempotency guarantee."""
+        start_time = time.perf_counter()
+        params = parameters or {}
+        key = idempotency_key or "default-key"
+
+        # 1. Validate customer ID
+        if not verified_customer_id or not isinstance(verified_customer_id, str) or not verified_customer_id.strip():
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="AUTHORIZATION_REQUIRED",
+                error_message="Missing or invalid verified customer identifier (IAL >= 2 required)",
+                execution_time_ms=elapsed_ms,
+            )
+
+        # 2. Validate operation
+        if operation not in self.supported_operations:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="UNSUPPORTED_OPERATION",
+                error_message=f"Operation '{operation}' is not supported by connector '{self.connector_name}'",
+                execution_time_ms=elapsed_ms,
+            )
+
+        # 3. Bound timeout
+        bounded_timeout = max(0.5, min(float(timeout_seconds), 15.0))
+
+        try:
+            data = await self._execute_mutation_internal(
+                operation=operation,
+                verified_customer_id=verified_customer_id.strip(),
+                parameters=params,
+                idempotency_key=key,
+                timeout_seconds=bounded_timeout,
+            )
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=True,
+                connector_name=self.connector_name,
+                operation=operation,
+                data=data,
+                execution_time_ms=elapsed_ms,
+            )
+
+        except ConnectorNotFoundError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="NOT_FOUND",
+                error_message=str(e),
+                execution_time_ms=elapsed_ms,
+            )
+
+        except ConnectorTimeoutError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="TIMEOUT",
+                error_message=str(e),
+                execution_time_ms=elapsed_ms,
+            )
+
+        except ConnectorRateLimitError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="RATE_LIMITED",
+                error_message=str(e),
+                execution_time_ms=elapsed_ms,
+            )
+
+        except ConnectorCircuitOpenError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="CIRCUIT_OPEN",
+                error_message=str(e),
+                execution_time_ms=elapsed_ms,
+            )
+
+        except ConnectorValidationError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="VALIDATION_ERROR",
+                error_message=str(e),
+                execution_time_ms=elapsed_ms,
+            )
+
+        except Exception as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="UPSTREAM_ERROR",
+                error_message=f"External mutation failed: {e}",
+                execution_time_ms=elapsed_ms,
+            )
+

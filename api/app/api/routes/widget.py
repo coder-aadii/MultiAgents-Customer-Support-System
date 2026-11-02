@@ -28,6 +28,7 @@ from app.services.visitor_service import (
     invalidate_visitor_session,
     update_visitor_profile,
 )
+from app.tenancy.resolver import resolve_tenant
 
 widget_router = APIRouter(prefix="/widget", tags=["widget"])
 
@@ -40,7 +41,7 @@ async def create_session(
     x_customer_token: str | None = Header(default=None, alias="x-customer-token"),
     origin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
-    org_ctx: OrganizationContext = Depends(get_organization_context),
+    org = Depends(resolve_tenant),
 ) -> WidgetSessionResponse:
     request_id = getattr(request.state, "request_id", None)
     raw_token = None

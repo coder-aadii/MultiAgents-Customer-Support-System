@@ -13,6 +13,7 @@ from app.database import get_session
 from app.models.user import User, UserRole
 from app.models.visitor_session import VisitorSession
 from app.security.tokens import decode_access_jwt, hash_token
+from app.tenancy.context import TenantContext
 
 security = HTTPBearer(auto_error=False)
 
@@ -53,6 +54,7 @@ async def get_current_user(
     if not user.is_active:
         raise UnauthorizedError("Account is inactive")
 
+    TenantContext.set_tenant(user.organization_id)
     return user
 
 
@@ -97,6 +99,7 @@ async def get_visitor_session(
     if not session:
         raise UnauthorizedError("Session expired or invalid")
 
+    TenantContext.set_tenant(session.organization_id)
     return session
 
 

@@ -19,6 +19,11 @@ class ConversationResponse(BaseModel):
     last_message_at: datetime
     created_at: datetime
     updated_at: datetime
+    priority: str = "normal"
+    sla_breached: bool = False
+    channel_type: str | None = None
+    assigned_team_id: uuid.UUID | None = None
+    assigned_agent_id: uuid.UUID | None = None
     assignee: UserResponse | None = None
     visitor: VisitorResponse | None = None
 

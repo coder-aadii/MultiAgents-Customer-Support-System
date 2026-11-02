@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+from app.tenancy.context import TenantContext
 
 
 class ConnectorAuditLog(Base):
@@ -19,6 +20,13 @@ class ConnectorAuditLog(Base):
     __tablename__ = "connector_audit_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE", name="fk_connector_audit_logs_organization_id"),
+        default=lambda: TenantContext.get_tenant_id(),
+        nullable=False,
+        index=True,
+    )
     connector_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
