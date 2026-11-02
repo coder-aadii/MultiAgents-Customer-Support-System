@@ -7,6 +7,7 @@ export interface WidgetInitOptions {
   position?: "bottom-right" | "bottom-left";
   accentColor?: string;
   title?: string;
+  customerToken?: string;
 }
 
 export interface MCSSWidgetInstance {
@@ -31,6 +32,7 @@ export function init(options: WidgetInitOptions): MCSSWidgetInstance {
     position: options.position || "bottom-right",
     accentColor: options.accentColor || "#2563eb",
     title: options.title || "MCSS Support",
+    customerToken: options.customerToken,
   };
 
   // Idempotent second-call behavior: exactly one launcher/root per target

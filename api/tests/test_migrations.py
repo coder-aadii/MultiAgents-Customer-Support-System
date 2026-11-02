@@ -45,6 +45,10 @@ def test_migration_lifecycle(alembic_cfg):
         "audit_events",
         "knowledge_documents",
         "knowledge_chunks",
+        "conversation_evidence_records",
+        "assistant_jobs",
+        "connector_definitions",
+        "connector_audit_logs",
     }
     for expected in expected_tables:
         assert expected in tables, f"Expected table '{expected}' not found in {tables}"
@@ -91,6 +95,13 @@ def test_migration_lifecycle(alembic_cfg):
         assert "ix_knowledge_chunks_embedding_hnsw" in indexes
         assert "ix_knowledge_chunks_document_ordinal" in indexes
 
+        # Verify Phase 5A visitor_sessions columns
+        visitor_session_cols = {col["name"] for col in inspector.get_columns("visitor_sessions")}
+        assert "verified_customer_id" in visitor_session_cols
+        assert "customer_token_hash" in visitor_session_cols
+        assert "identity_assurance_level" in visitor_session_cols
+        assert "customer_token_expires_at" in visitor_session_cols
+
         # Verify widget_settings singleton seed
         settings_row = conn.execute(
             text(
@@ -123,6 +134,11 @@ def test_migration_lifecycle(alembic_cfg):
         fk["name"]: fk["referred_table"] for fk in inspector.get_foreign_keys("handoffs")
     }
     assert handoff_fks.get("fk_handoffs_conversation_id") == "conversations"
+
+    evidence_fks = {
+        fk["referred_table"] for fk in inspector.get_foreign_keys("conversation_evidence_records")
+    }
+    assert "conversations" in evidence_fks
 
     # 3. Downgrade to Phase 0 extensions (reverses Phase 1)
     command.downgrade(alembic_cfg, "0001_phase_0_extensions")

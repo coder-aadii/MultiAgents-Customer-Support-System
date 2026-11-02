@@ -10,6 +10,7 @@ export interface WidgetConfig {
   position?: "bottom-right" | "bottom-left";
   accentColor?: string;
   title?: string;
+  customerToken?: string;
 }
 
 export default function Widget({ config }: { config: WidgetConfig }) {
@@ -45,7 +46,9 @@ export default function Widget({ config }: { config: WidgetConfig }) {
   const initSession = useCallback(async () => {
     if (sessionInitialized) return;
     try {
-      await apiClient.createSession();
+      await apiClient.createSession(
+        config.customerToken ? { customer_token: config.customerToken } : undefined
+      );
       setSessionInitialized(true);
 
       // Fetch initial conversation detail
@@ -358,28 +361,35 @@ export default function Widget({ config }: { config: WidgetConfig }) {
                 </div>
 
                 {/* Source chips if any */}
-                {msg.sender_type === "assistant" &&
-                  ((msg as any).metadata?.cited_chunk_ids || (msg as any).metadata_json?.cited_chunk_ids) &&
-                  (((msg as any).metadata?.cited_chunk_ids || (msg as any).metadata_json?.cited_chunk_ids).length > 0) && (
+                {msg.sender_type === "assistant" && (() => {
+                  const meta = (msg as any).metadata || (msg as any).metadata_json || {};
+                  const sources: any[] = meta.sources || [];
+                  const citedIds: string[] = meta.cited_chunk_ids || [];
+                  if (sources.length === 0 && citedIds.length === 0) return null;
+
+                  return (
                     <div className="mcss-source-chips">
-                      {((msg as any).metadata?.cited_chunk_ids || (msg as any).metadata_json?.cited_chunk_ids).map(
-                        (chunkId: string, idx: number) => {
-                          const sources = (msg as any).metadata?.sources || (msg as any).metadata_json?.sources || [];
-                          const matching = sources.find((s: any) => s.chunk_id === chunkId);
-                          const chipLabel = matching?.doc_title || `Source ${idx + 1}`;
-                          return (
-                            <span
-                              key={chunkId || idx}
-                              className="mcss-source-chip"
-                              title={matching?.doc_title ? `${matching.doc_title} (${chunkId})` : undefined}
-                            >
-                              {chipLabel}
+                      {sources.length > 0
+                        ? sources.map((s: any, idx: number) => {
+                            const chipLabel = s.title || s.doc_title || `Source ${idx + 1}`;
+                            return (
+                              <span
+                                key={s.evidence_id || s.chunk_id || idx}
+                                className="mcss-source-chip"
+                                title={chipLabel}
+                              >
+                                {chipLabel}
+                              </span>
+                            );
+                          })
+                        : citedIds.map((chunkId: string, idx: number) => (
+                            <span key={chunkId || idx} className="mcss-source-chip">
+                              {`Source ${idx + 1}`}
                             </span>
-                          );
-                        }
-                      )}
+                          ))}
                     </div>
-                  )}
+                  );
+                })()}
 
                 <span className="mcss-time-label">
                   {new Date(msg.created_at).toLocaleTimeString([], {

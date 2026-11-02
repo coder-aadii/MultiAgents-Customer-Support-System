@@ -12,6 +12,7 @@ from app.schemas.message import HTML_TAG_REGEX
 
 class TriageAction(str, enum.Enum):
     answer = "answer"
+    business_data = "business_data"
     clarify = "clarify"
     handoff = "handoff"
 
@@ -19,6 +20,8 @@ class TriageAction(str, enum.Enum):
 class TriageReason(str, enum.Enum):
     human_request = "human_request"
     account_or_billing_request = "account_or_billing_request"
+    business_data_request = "business_data_request"
+    authentication_required = "authentication_required"
     unsafe_domain = "unsafe_domain"
     missing_detail = "missing_detail"
     faq_match = "faq_match"

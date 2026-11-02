@@ -143,11 +143,13 @@ class FakeLLMProvider(LLMProvider):
     def _generate_deterministic_response(self, request: LLMRequest) -> LLMResponse:
         full_text = " ".join([m.content for m in request.messages])
         system_text = " ".join([m.content for m in request.messages if m.role == "system"])
-        user_text = " ".join([m.content for m in request.messages if m.role == "user"])
+        user_messages = [m.content for m in request.messages if m.role == "user"]
+        user_text = " ".join(user_messages)
+        current_user_text = user_messages[-1] if user_messages else user_text
 
         # Check if classifier prompt
         if "classify" in system_text.lower():
-            content = self._deterministic_classifier(user_text)
+            content = self._deterministic_classifier(current_user_text)
         elif "sources" in system_text.lower() or "cited_chunk_ids" in system_text.lower():
             content = self._deterministic_answer_generator(system_text, user_text)
         else:
@@ -170,7 +172,21 @@ class FakeLLMProvider(LLMProvider):
         text_lower = user_text.lower()
         if any(w in text_lower for w in ["human", "agent", "representative", "person", "operator", "support team", "staff"]):
             return json.dumps({"action": "handoff", "reason": "human_request"})
-        if any(w in text_lower for w in ["refund", "cancel", "payment", "order", "billing", "account"]):
+        if any(
+            w in text_lower
+            for w in [
+                "refund",
+                "cancel",
+                "payment",
+                "order",
+                "billing",
+                "account",
+                "name",
+                "email",
+                "who am i",
+                "profile",
+            ]
+        ):
             return json.dumps({"action": "handoff", "reason": "account_or_billing_request"})
         if any(w in text_lower for w in ["legal", "lawyer", "medical", "doctor", "emergency", "security", "exploit", "vulnerability", "hack"]):
             return json.dumps({"action": "handoff", "reason": "unsafe_domain"})

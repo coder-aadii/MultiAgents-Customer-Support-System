@@ -38,6 +38,44 @@ class Settings(BaseSettings):
     MCSS_JWT_REFRESH_DAYS: int = Field(default=7, description="Refresh token lifetime in days")
     MCSS_RATE_LIMIT_ENABLED: bool = Field(default=True, description="Enable API rate limiting")
 
+    # Customer JWT Authentication & Organization (Phase 5A)
+    MCSS_CUSTOMER_JWT_SECRET: SecretStr = Field(
+        default=SecretStr("customer-jwt-secret-key-at-least-32-chars-long"),
+        description="Customer JWT signing/verification secret (min 32 chars for HS256)",
+    )
+    MCSS_CUSTOMER_JWT_ALGORITHMS: str = Field(
+        default="HS256",
+        description="Comma-separated accepted customer JWT algorithms (HS256, RS256, ES256)",
+    )
+    MCSS_CUSTOMER_JWT_ISSUER: str = Field(
+        default="mcss-customer-portal",
+        description="Expected customer JWT issuer (iss claim)",
+    )
+    MCSS_CUSTOMER_JWT_AUDIENCE: str = Field(
+        default="mcss-api",
+        description="Expected customer JWT audience (aud claim)",
+    )
+    MCSS_CUSTOMER_JWT_PUBLIC_KEY: str = Field(
+        default="",
+        description="PEM-formatted public key for asymmetric customer JWT verification (RS256, ES256)",
+    )
+    MCSS_ORGANIZATION_ID: str = Field(
+        default="org_default",
+        description="Explicit single-tenant organization ID",
+    )
+    MCSS_ORGANIZATION_NAME: str = Field(
+        default="Default Organization",
+        description="Explicit single-tenant organization display name",
+    )
+    ECOMMERCE_DB_PATH: str = Field(
+        default="api/data/ecommerce_store.db",
+        description="Path to SQLite e-commerce store database",
+    )
+    MCSS_USE_MOCK_CONNECTORS: bool = Field(
+        default=False,
+        description="Whether Tool Gateway should use in-memory mock connectors instead of real enterprise connectors",
+    )
+
     # CORS
     MCSS_CORS_ORIGINS: str = Field(
         default="http://localhost:5173,http://localhost:5174",
@@ -142,6 +180,34 @@ class Settings(BaseSettings):
     def is_test_or_fake(self) -> bool:
         return self.MCSS_ENV == "test" or self.MCSS_LLM_BASE_URL == "fake"
 
+    @property
+    def CUSTOMER_JWT_SECRET(self) -> str:
+        return self.MCSS_CUSTOMER_JWT_SECRET.get_secret_value()
+
+    @property
+    def CUSTOMER_JWT_ALGORITHMS(self) -> list[str]:
+        return [alg.strip() for alg in self.MCSS_CUSTOMER_JWT_ALGORITHMS.split(",") if alg.strip()]
+
+    @property
+    def CUSTOMER_JWT_ISSUER(self) -> str:
+        return self.MCSS_CUSTOMER_JWT_ISSUER
+
+    @property
+    def CUSTOMER_JWT_AUDIENCE(self) -> str:
+        return self.MCSS_CUSTOMER_JWT_AUDIENCE
+
+    @property
+    def CUSTOMER_JWT_PUBLIC_KEY(self) -> str:
+        return self.MCSS_CUSTOMER_JWT_PUBLIC_KEY
+
+    @property
+    def ORGANIZATION_ID(self) -> str:
+        return self.MCSS_ORGANIZATION_ID
+
+    @property
+    def ORGANIZATION_NAME(self) -> str:
+        return self.MCSS_ORGANIZATION_NAME
+
     def validate_production(self) -> None:
         if self.MCSS_ENV == "production":
             if len(self.JWT_SECRET) < 32:
@@ -150,6 +216,14 @@ class Settings(BaseSettings):
                 raise ValueError("Wildcard CORS origins not allowed in production")
             if self.MCSS_LLM_BASE_URL == "fake":
                 raise ValueError("MCSS_LLM_BASE_URL cannot be 'fake' in production")
+            if "HS256" in self.CUSTOMER_JWT_ALGORITHMS and len(self.CUSTOMER_JWT_SECRET) < 32:
+                raise ValueError(
+                    "MCSS_CUSTOMER_JWT_SECRET must be at least 32 characters in production"
+                )
+        allowed_algs = {"HS256", "RS256", "ES256"}
+        for alg in self.CUSTOMER_JWT_ALGORITHMS:
+            if alg.lower() == "none" or alg not in allowed_algs:
+                raise ValueError(f"Unsupported or insecure algorithm in MCSS_CUSTOMER_JWT_ALGORITHMS: {alg}")
         if self.MCSS_EMBEDDING_DIMENSIONS != 1536:
             raise ValueError("MCSS_EMBEDDING_DIMENSIONS must be 1536 for the initial schema")
 

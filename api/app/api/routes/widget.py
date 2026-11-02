@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.rate_limit import rate_limit_visitor_message, rate_limit_widget_session
 from app.config import settings
+from app.core.context import OrganizationContext, get_organization_context
 from app.database import get_session
 from app.dependencies import get_visitor_session, validate_visitor_conversation
 from app.models.message import SenderType
@@ -20,9 +21,13 @@ from app.schemas.visitor import (
     WidgetSessionRequest,
     WidgetSessionResponse,
 )
-from app.services.assistant_service import handle_assistant_pipeline
 from app.services.conversation_service import get_conversation, list_messages, post_message
-from app.services.visitor_service import create_or_resume_session, update_visitor_profile
+from app.services.job_worker import enqueue_job, run_worker_cycle
+from app.services.visitor_service import (
+    create_or_resume_session,
+    invalidate_visitor_session,
+    update_visitor_profile,
+)
 
 widget_router = APIRouter(prefix="/widget", tags=["widget"])
 
@@ -32,8 +37,10 @@ async def create_session(
     request: Request,
     payload: WidgetSessionRequest | None = None,
     authorization: str | None = Header(default=None),
+    x_customer_token: str | None = Header(default=None, alias="x-customer-token"),
     origin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
+    org_ctx: OrganizationContext = Depends(get_organization_context),
 ) -> WidgetSessionResponse:
     request_id = getattr(request.state, "request_id", None)
     raw_token = None
@@ -42,6 +49,7 @@ async def create_session(
 
     name = payload.name if payload else None
     email = payload.email if payload else None
+    customer_token = x_customer_token or (payload.customer_token if payload else None)
 
     # Apply rate limiting for new session creation (resuming with valid token is not counted)
     if not raw_token:
@@ -52,10 +60,22 @@ async def create_session(
         db=db,
         origin=origin,
         raw_token=raw_token,
+        customer_token=customer_token,
         name=name,
         email=email,
         request_id=request_id,
     )
+
+
+@widget_router.post("/sessions/logout")
+async def logout_session(
+    request: Request,
+    session: VisitorSession = Depends(get_visitor_session),
+    db: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    request_id = getattr(request.state, "request_id", None)
+    await invalidate_visitor_session(db=db, session=session, request_id=request_id)
+    return {"status": "ok", "message": "Session invalidated"}
 
 
 @widget_router.get("/conversation", response_model=ConversationDetailResponse)
@@ -86,6 +106,7 @@ async def get_visitor_current_messages(
 async def create_visitor_current_message(
     payload: MessageCreate,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: VisitorSession = Depends(get_visitor_session),
     db: AsyncSession = Depends(get_session),
 ) -> MessageResponse:
@@ -101,14 +122,13 @@ async def create_visitor_current_message(
         request_id=request_id,
     )
     if created and settings.MCSS_ASSISTANT_ENABLED:
-        try:
-            await handle_assistant_pipeline(
-                db=db,
-                conversation_id=session.conversation_id,
-                visitor_message_content=payload.content,
-            )
-        except Exception:
-            pass
+        await enqueue_job(
+            db=db,
+            conversation_id=session.conversation_id,
+            message_id=msg.id,
+        )
+        await db.commit()
+        background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker")
     return msg
 
 
@@ -161,6 +181,7 @@ async def create_visitor_message(
     conversation_id: uuid.UUID,
     payload: MessageCreate,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: VisitorSession = Depends(validate_visitor_conversation),
     db: AsyncSession = Depends(get_session),
 ) -> MessageResponse:
@@ -176,12 +197,11 @@ async def create_visitor_message(
         request_id=request_id,
     )
     if created and settings.MCSS_ASSISTANT_ENABLED:
-        try:
-            await handle_assistant_pipeline(
-                db=db,
-                conversation_id=conversation_id,
-                visitor_message_content=payload.content,
-            )
-        except Exception:
-            pass
+        await enqueue_job(
+            db=db,
+            conversation_id=conversation_id,
+            message_id=msg.id,
+        )
+        await db.commit()
+        background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker")
     return msg

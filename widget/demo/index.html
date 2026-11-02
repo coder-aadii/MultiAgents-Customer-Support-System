@@ -3,18 +3,242 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MCSS Widget Demo</title>
+    <title>MCSS E-Commerce Customer Support Testbed</title>
   </head>
-  <body>
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 40px; max-width: 640px; margin: 40px auto; color: #374151; background: #ffffff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-      <h1 style="font-size: 24px; font-weight: bold; color: #111827; margin: 0 0 12px 0;">Acme Corp Support Testbed</h1>
-      <p style="margin: 0 0 16px 0; line-height: 1.6; color: #4b5563;">
-        This page demonstrates the embeddable MCSS customer support widget. Click the launcher icon in the bottom-right corner to open the support panel.
-      </p>
-      <div style="padding: 12px 16px; background: #f3f4f6; border-radius: 6px; font-size: 13px; color: #6b7280;">
-        Shadow DOM encapsulation is active. Host styles do not interfere with the widget UI.
+  <body style="background: #f1f5f9; margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+    <div style="max-width: 800px; margin: 0 auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04); padding: 32px; color: #1e293b;">
+      
+      <!-- Header -->
+      <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 24px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+          <h1 style="font-size: 24px; font-weight: 700; color: #0f172a; margin: 0;">
+            🛒 E-Commerce Support Testbed
+          </h1>
+          <span style="background: #e0e7ff; color: #3730a3; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 9999px; text-transform: uppercase;">
+            Phase 5A Verified Data
+          </span>
+        </div>
+        <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
+          Connected to the real Brazilian E-Commerce dataset (<b>99,441 customers</b>, <b>99,441 orders</b>, <b>112,650 line items</b>). All customer accounts use password: <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: 600; color: #0f172a;">Asdf@1234</code>.
+        </p>
+      </div>
+
+      <!-- Active Identity Banner -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 6px;">
+          Active Visitor Session & Cryptographic Identity
+        </div>
+        <div id="identity-display" style="font-size: 15px; font-weight: 600; color: #0f172a; margin-bottom: 8px;">
+          Checking identity...
+        </div>
+        <div id="identity-meta" style="font-size: 13px; color: #475569;"></div>
+      </div>
+
+      <!-- Quick 1-Click Customer Profiles -->
+      <div style="margin-bottom: 24px;">
+        <div style="font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 10px;">
+          ⚡ 1-Click Customer Switcher (Real Olist Accounts):
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;" id="sample-buttons-container">
+          <!-- Populated dynamically from API -->
+        </div>
+        <div style="margin-top: 10px; display: flex; gap: 8px;">
+          <button id="btn-anon" style="padding: 6px 12px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid #cbd5e1; background: #ffffff; color: #475569;">
+            👤 Switch to Anonymous Visitor (IAL 0)
+          </button>
+        </div>
+      </div>
+
+      <!-- Manual Customer Login Accordion -->
+      <details style="margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; background: #ffffff;">
+        <summary style="font-size: 13px; font-weight: 600; color: #2563eb; cursor: pointer;">
+          🔑 Or Log In with Any Customer ID / Email from the 99,441 records
+        </summary>
+        <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px;">
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <input
+              id="input-identifier"
+              type="text"
+              placeholder="Customer ID or Email (e.g. cust_3ce436f1@olist-store.com)"
+              style="flex: 2; min-width: 260px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;"
+            />
+            <input
+              id="input-password"
+              type="password"
+              value="Asdf@1234"
+              placeholder="Password (default: Asdf@1234)"
+              style="flex: 1; min-width: 140px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;"
+            />
+            <button
+              id="btn-login-submit"
+              style="padding: 8px 16px; background: #2563eb; color: #ffffff; font-size: 13px; font-weight: 600; border: none; border-radius: 6px; cursor: pointer;"
+            >
+              Log In
+            </button>
+          </div>
+          <div id="login-error" style="color: #dc2626; font-size: 12px; display: none;"></div>
+        </div>
+      </details>
+
+      <!-- Tailored Test Queries -->
+      <div style="border-top: 1px solid #e2e8f0; padding-top: 20px;">
+        <div style="font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 8px;">
+          💡 Recommended Test Prompts for Active Account:
+        </div>
+        <div id="prompt-chips" style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #334155;">
+          <!-- Populated based on active profile -->
+        </div>
       </div>
     </div>
+
+    <!-- Script to handle authentication and sample customer profiles -->
+    <script>
+      const identityDisplay = document.getElementById("identity-display");
+      const identityMeta = document.getElementById("identity-meta");
+      const sampleContainer = document.getElementById("sample-buttons-container");
+      const promptChipsContainer = document.getElementById("prompt-chips");
+      const inputIdentifier = document.getElementById("input-identifier");
+      const inputPassword = document.getElementById("input-password");
+      const btnLoginSubmit = document.getElementById("btn-login-submit");
+      const loginError = document.getElementById("login-error");
+      const btnAnon = document.getElementById("btn-anon");
+
+      let currentCustomer = null;
+      try {
+        const stored = sessionStorage.getItem("mcss_customer_profile");
+        if (stored) currentCustomer = JSON.parse(stored);
+      } catch (e) {}
+
+      const currentToken = sessionStorage.getItem("mcss_customer_token");
+
+      function updateIdentityUI() {
+        if (currentToken && currentCustomer) {
+          identityDisplay.innerHTML = `🔐 <span style="color: #16a34a;">Verified Customer</span>: <code>${currentCustomer.customer_id}</code>`;
+          identityMeta.innerHTML = `
+            Email: <b>${currentCustomer.email || 'None'}</b> | 
+            Location: <b>${currentCustomer.city || ''}, ${currentCustomer.state || ''}</b> | 
+            Assurance Level: <b style="color: #16a34a;">IAL 2 (Cryptographically Verified)</b>
+          `;
+        } else {
+          identityDisplay.innerHTML = `👤 <span style="color: #64748b;">Anonymous Visitor</span>`;
+          identityMeta.innerHTML = `Assurance Level: <b>IAL 0 (Unauthenticated)</b> — Cannot view customer-specific orders or business records.`;
+        }
+      }
+
+      function updatePrompts(queries) {
+        if (!queries || queries.length === 0) {
+          queries = [
+            "What is your return policy?",
+            "Where is order ORD-1001?",
+            "I want to talk to a human agent"
+          ];
+        }
+        promptChipsContainer.innerHTML = queries.map(q => `
+          <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 12px;">
+            <code>${q}</code>
+            <button onclick="navigator.clipboard.writeText('${q.replace(/'/g, "\\'")}'); alert('Copied to clipboard! Paste into the support chat.');" style="padding: 3px 8px; font-size: 11px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; color: #334155;">
+              Copy
+            </button>
+          </div>
+        `).join("");
+      }
+
+      async function loginCustomer(identifier, password) {
+        loginError.style.display = "none";
+        try {
+          const res = await fetch("/api/v1/store/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ identifier, password }),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.detail || "Login failed");
+          }
+          const data = await res.json();
+          sessionStorage.setItem("mcss_customer_token", data.token);
+          sessionStorage.setItem("mcss_customer_profile", JSON.stringify(data));
+          location.reload();
+        } catch (err) {
+          loginError.innerText = err.message;
+          loginError.style.display = "block";
+        }
+      }
+
+      // Load sample profiles from backend
+      async function loadSampleCustomers() {
+        try {
+          const res = await fetch("/api/v1/store/auth/sample-customers");
+          const samples = await res.json();
+          sampleContainer.innerHTML = samples.map((sample, idx) => `
+            <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background: #ffffff; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">
+                  ${sample.label}
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-bottom: 10px; line-height: 1.4;">
+                  ${sample.description}
+                </div>
+              </div>
+              <button
+                class="btn-sample-login"
+                data-id="${sample.customer_id}"
+                data-pass="${sample.password}"
+                style="padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid #2563eb; background: #eff6ff; color: #1d4ed8; width: 100%;"
+              >
+                Sign In as this Customer
+              </button>
+            </div>
+          `).join("");
+
+          document.querySelectorAll(".btn-sample-login").forEach(btn => {
+            btn.addEventListener("click", () => {
+              const id = btn.getAttribute("data-id");
+              const pass = btn.getAttribute("data-pass");
+              loginCustomer(id, pass);
+            });
+          });
+
+          // Match active customer to sample queries
+          if (currentCustomer) {
+            const matched = samples.find(s => s.customer_id === currentCustomer.customer_id);
+            if (matched) {
+              updatePrompts(matched.sample_queries);
+            } else {
+              updatePrompts([
+                "What are my orders?",
+                "What is your return policy?",
+                "Connect me with support"
+              ]);
+            }
+          } else {
+            updatePrompts([
+              "What is your return policy? (Public FAQ)",
+              "Where is my order ORD-1001? (Requires Login Prompt)",
+              "I want to speak with support (Staff Handoff)"
+            ]);
+          }
+        } catch (e) {
+          console.error("Failed to load sample profiles", e);
+        }
+      }
+
+      btnLoginSubmit.addEventListener("click", () => {
+        const id = inputIdentifier.value.trim();
+        const pass = inputPassword.value.trim();
+        if (id && pass) loginCustomer(id, pass);
+      });
+
+      btnAnon.addEventListener("click", () => {
+        sessionStorage.removeItem("mcss_customer_token");
+        sessionStorage.removeItem("mcss_customer_profile");
+        location.reload();
+      });
+
+      updateIdentityUI();
+      loadSampleCustomers();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

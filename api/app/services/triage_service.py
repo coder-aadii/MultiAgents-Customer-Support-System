@@ -3,17 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, asc, desc, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_event import ActorType, AuditEvent
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, SenderType
+from app.models.visitor_session import VisitorSession
 from app.prompts.classifier import CLASSIFIER_SYSTEM_PROMPT
 from app.providers import LLMMessage, LLMProvider, LLMRequest, get_llm_provider
-from app.schemas.assistant import TriageAction, TriageReason, TriageResult
+from app.schemas.assistant import TriageAction, TriageResult
 
 logger = logging.getLogger("mcss.assistant.triage")
 
@@ -51,6 +53,21 @@ async def classify_message(
             conv.status.value,
         )
         return None
+
+    # Fetch active visitor session to evaluate customer identity assurance level
+    sess_stmt = (
+        select(VisitorSession)
+        .where(
+            VisitorSession.conversation_id == conversation_id,
+            VisitorSession.revoked_at.is_(None),
+            VisitorSession.expires_at > datetime.now(UTC),
+        )
+        .order_by(desc(VisitorSession.created_at))
+        .limit(1)
+    )
+    sess_res = await db.execute(sess_stmt)
+    active_session = sess_res.scalar_one_or_none()
+    is_authenticated = bool(active_session and active_session.is_customer_authenticated)
 
     # 2. Fetch bounded conversation history (excluding staff notes and system messages)
     hist_stmt = (
@@ -111,14 +128,65 @@ async def classify_message(
         # 4. Strict Schema Parsing
         raw_data = json.loads(response.content)
         action_str = str(raw_data.get("action", "")).strip().lower()
+        reason_str = str(raw_data.get("reason", "unknown"))[:120]
 
-        if action_str not in (TriageAction.answer.value, TriageAction.clarify.value, TriageAction.handoff.value):
+        valid_actions = {
+            TriageAction.answer.value,
+            TriageAction.clarify.value,
+            TriageAction.handoff.value,
+            TriageAction.business_data.value,
+        }
+
+        if action_str not in valid_actions:
             triage_result = TriageResult.fallback_handoff(reason="unknown_action_fallback")
         else:
-            triage_result = TriageResult(
-                action=TriageAction(action_str),
-                reason=str(raw_data.get("reason", "unknown"))[:120],
-            )
+            parsed_action = TriageAction(action_str)
+            # Gated triage policy enforcement:
+            if is_authenticated:
+                if parsed_action == TriageAction.business_data:
+                    triage_result = TriageResult(
+                        action=TriageAction.business_data,
+                        reason=reason_str or "business_data_request",
+                    )
+                elif (
+                    parsed_action == TriageAction.handoff
+                    and reason_str == "account_or_billing_request"
+                    and not any(
+                        w in current_message.lower()
+                        for w in [
+                            "cancel",
+                            "human",
+                            "agent",
+                            "representative",
+                            "person",
+                            "operator",
+                            "staff",
+                            "stop charging",
+                            "change",
+                        ]
+                    )
+                ):
+                    triage_result = TriageResult(
+                        action=TriageAction.business_data,
+                        reason="business_data_request",
+                    )
+                else:
+                    triage_result = TriageResult(
+                        action=parsed_action,
+                        reason=reason_str,
+                    )
+            else:
+                # Unverified visitor (IAL < 2) requesting business records is prompted to authenticate
+                if parsed_action == TriageAction.business_data:
+                    triage_result = TriageResult(
+                        action=TriageAction.clarify,
+                        reason="authentication_required",
+                    )
+                else:
+                    triage_result = TriageResult(
+                        action=parsed_action,
+                        reason=reason_str,
+                    )
 
     except Exception as exc:
         logger.warning(

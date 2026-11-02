@@ -48,6 +48,52 @@ Admin Browser ── React Console ────┘        │
 - **Widget**: React 18, TypeScript, Vite, Shadow DOM, IIFE bundle
 - **Database**: PostgreSQL 16 with pgvector for semantic search
 
+## MCSS Lifecycle Phases & Roadmap Structure
+
+MCSS follows a phased, dependency-ordered architecture:
+
+```mermaid
+flowchart TD
+    subgraph CoreMVP["Core Foundation & Controlled Assistant (Phases 0–4)"]
+        P0["Phase 0: Foundation & Environment"] --> P1["Phase 1: Identity & Conversation Data"]
+        P1 --> P2["Phase 2: Conversation Surfaces (Widget + Admin)"]
+        P2 --> P3["Phase 3: Knowledge Base & Vector Retrieval"]
+        P3 --> P4["Phase 4: Controlled Assistant & Human Takeover"]
+    end
+
+    subgraph Enterprise["Enterprise Platform (Phase 5)"]
+        CoreMVP --> P5A["Phase 5A: Read-Only Business Data Platform"]
+        P5A --> P5B["Phase 5B: Real Enterprise Data Connectors"]
+        P5B --> P5C["Phase 5C: Controlled Business Actions"]
+        P5C --> P5D["Phase 5D: Enterprise Multi-Tenancy & Identity"]
+        P5D --> P5E["Phase 5E: Omnichannel Customer Support"]
+        P5E --> P5F["Phase 5F: Advanced Support Operations"]
+    end
+
+    subgraph Hardening["Production Release (Phase 6)"]
+        Enterprise --> P6["Phase 6: Hardening, Security Verification & Release"]
+    end
+```
+
+- **Phases 0–4 (Core Foundation & Controlled Assistant):** Complete single-tenant support MVP with knowledge RAG, PostgreSQL 16 + pgvector, embeddable widget, admin inbox, and safe staff takeover. (Migrations `0001`–`0003`, 97 tests).
+- **Phase 5 (Enterprise Capabilities & Multi-Agent Roadmap):**
+  - **Master Architecture Roadmap:** [`local/MCSS-From-Scratch-docs/phase-5-enterprise.md`](local/MCSS-From-Scratch-docs/phase-5-enterprise.md)
+  - **Implementation Gap Analysis:** [`local/MCSS-From-Scratch-docs/phase-5-gap-analysis.md`](local/MCSS-From-Scratch-docs/phase-5-gap-analysis.md)
+  - **Sub-phase 5A (Read-Only Business Data Support):** [`local/MCSS-From-Scratch-docs/phase-5a-specification.md`](local/MCSS-From-Scratch-docs/phase-5a-specification.md) *(Completed & Verified)*
+    - `5A.1`: Customer Identity Foundation & Organization Context *(Completed — migration `0004_customer_identity`, 19 tests)*
+    - `5A.2`: Typed Evidence References & Schema Generalization *(Completed — migration `0005_evidence_records`, 8 tests)*
+    - `5A.3`: Universal Tool Gateway & Mock Business Connectors *(Completed — 14 tests)*
+    - `5A.4`: Durable Asynchronous Message Processing (`assistant_jobs`) *(Completed — migration `0006_assistant_jobs`, 6 tests)*
+    - `5A.5`: Controlled Fact Templates, Triage Routing & Policy Gate *(Completed — 9 tests)*
+    - `5A.6`: Security Evaluation, Benchmarking & End-to-End Testing *(Completed — 30 benchmark evals, 100% pass rate)*
+  - **Sub-phase 5B (Real Enterprise Data Connectors):** [`local/MCSS-From-Scratch-docs/phase-5b-enterprise-connectors.md`](local/MCSS-From-Scratch-docs/phase-5b-enterprise-connectors.md) *(Completed & Remediated — migration `0007_enterprise_connectors`, 22 connector tests, architectural adapter bridge)*
+  - **Sub-phase 5C (Controlled Business Actions):** [`local/MCSS-From-Scratch-docs/phase-5c-controlled-actions.md`](local/MCSS-From-Scratch-docs/phase-5c-controlled-actions.md) *(Next Implementation Target)*
+  - **Sub-phase 5D (Enterprise Multi-Tenancy & Identity):** [`local/MCSS-From-Scratch-docs/phase-5d-enterprise-tenancy.md`](local/MCSS-From-Scratch-docs/phase-5d-enterprise-tenancy.md) *(Planned)*
+  - **Sub-phase 5E (Omnichannel Customer Support):** [`local/MCSS-From-Scratch-docs/phase-5e-omnichannel.md`](local/MCSS-From-Scratch-docs/phase-5e-omnichannel.md) *(Planned)*
+  - **Sub-phase 5F (Advanced Support Operations):** [`local/MCSS-From-Scratch-docs/phase-5f-support-operations.md`](local/MCSS-From-Scratch-docs/phase-5f-support-operations.md) *(Planned)*
+  - **Strict Milestone Rule:** Each sub-phase has a dedicated executable specification. Implementation proceeds strictly one approved milestone at a time; no code is written directly from high-level roadmap descriptions.
+- **Phase 6 (Hardening, Security Verification & Release):** [`local/MCSS-From-Scratch-docs/phase-6-hardening-release.md`](local/MCSS-From-Scratch-docs/phase-6-hardening-release.md) — Comprehensive security audit, tool authorization gates, prompt injection fencing, and production release rehearsal.
+
 ## E-commerce Integration & How It Works
 
 MCSS functions as an embeddable, AI-grounded customer support plugin for any e-commerce platform (Shopify, WooCommerce, Next.js, or custom storefronts):
@@ -230,6 +276,10 @@ See `docs/runbook.md` for complete deployment, monitoring, and incident response
 - [Threat Model](docs/threat-model.md) — STRIDE analysis and mitigations
 - [Runbook](docs/runbook.md) — Operations, deployment, incidents
 - [Decisions](docs/decisions.md) — Implementation decision log
+- [Master Specification](local/MCSS-From-Scratch-docs/00-master-specification.md) — Authoritative baseline specification
+- [Phase 5 Enterprise Roadmap](local/MCSS-From-Scratch-docs/phase-5-enterprise.md) — Master enterprise vision & architecture
+- [Phase 5A Specification](local/MCSS-From-Scratch-docs/phase-5a-specification.md) — Executable milestone specification (Universal Business Data)
+- [Phase 6 Hardening & Release](local/MCSS-From-Scratch-docs/phase-6-hardening-release.md) — Release gate and security verification
 
 ## Project Structure
 

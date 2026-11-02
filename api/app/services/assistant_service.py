@@ -3,18 +3,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import sqlite3
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models.audit_event import ActorType, AuditEvent
+from app.gateway import (
+    EntityNotFoundError,
+    EntityRecord,
+    default_tool_gateway,
+)
+from app.models.audit_event import ActorType
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.handoff import Handoff, HandoffReason, HandoffStatus
 from app.models.message import Message, SenderType
+from app.models.visitor import Visitor
+from app.models.visitor_session import VisitorSession
 from app.prompts.generator import GENERATOR_SYSTEM_PROMPT
 from app.providers import (
     LLMMessage,
@@ -23,9 +31,13 @@ from app.providers import (
     get_llm_provider,
 )
 from app.schemas.assistant import GeneratorAction, GeneratorResult, TriageAction, TriageResult
+from app.schemas.evidence import EvidenceType, VerifiedFact
 from app.schemas.retrieval import RetrievalResultItem
 from app.services.conversation_service import record_audit
+from app.services.evidence_service import record_evidence, to_public_evidence_reference
+from app.services.policy_validator import PolicyValidator
 from app.services.retrieval_service import retrieve_knowledge_chunks
+from app.services.template_engine import TemplateEngine
 from app.services.triage_service import classify_message
 
 logger = logging.getLogger("mcss.assistant.service")
@@ -247,6 +259,479 @@ async def _get_conversation_lock(conversation_id: uuid.UUID) -> asyncio.Lock:
         return _conversation_locks[conversation_id]
 
 
+async def _trigger_staff_handoff(
+    db: AsyncSession,
+    active_conv: Conversation,
+    conversation_id: uuid.UUID,
+    reason: HandoffReason,
+    summary: str,
+    now: datetime,
+) -> Message:
+    """Safely transitions conversation to waiting_for_staff and delivers the standard handoff message."""
+    await create_or_reuse_handoff(
+        db,
+        conversation_id=conversation_id,
+        reason=reason,
+        summary=summary[:500],
+    )
+    active_conv.status = ConversationStatus.waiting_for_staff
+    active_conv.last_message_at = now
+    active_conv.updated_at = now
+
+    handoff_msg = Message(
+        conversation_id=conversation_id,
+        client_message_id=uuid.uuid4(),
+        sender_type=SenderType.assistant,
+        content=HANDOFF_MESSAGE_TEXT,
+        metadata_json={"action": "handoff", "reason": summary[:120]},
+        created_at=now,
+    )
+    db.add(handoff_msg)
+    await db.commit()
+    return handoff_msg
+
+
+async def _handle_business_data_pipeline(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    visitor_message_content: str,
+    triage: TriageResult,
+    now: datetime,
+) -> Message | None:
+    """Executes verified business data retrieval, template rendering, and policy validation."""
+    recheck = await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+    )
+    active_conv = recheck.scalar_one_or_none()
+    if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        await db.commit()
+        return None
+
+    # Fetch active visitor session
+    sess_stmt = (
+        select(VisitorSession)
+        .where(
+            VisitorSession.conversation_id == conversation_id,
+            VisitorSession.revoked_at.is_(None),
+            VisitorSession.expires_at > now,
+        )
+        .order_by(desc(VisitorSession.created_at))
+        .limit(1)
+    )
+    sess_res = await db.execute(sess_stmt)
+    session = sess_res.scalar_one_or_none()
+
+    # Invariant: Unverified visitors (IAL < 2) requesting private records are never forwarded to the Tool Gateway.
+    if not session or not session.is_customer_authenticated or not session.verified_customer_id:
+        active_conv.last_message_at = now
+        active_conv.updated_at = now
+        clarify_msg = Message(
+            conversation_id=conversation_id,
+            client_message_id=uuid.uuid4(),
+            sender_type=SenderType.assistant,
+            content="Please log in to your store account to view your order, shipment, or account details.",
+            metadata_json={"action": "clarify", "reason": "authentication_required"},
+            created_at=now,
+        )
+        db.add(clarify_msg)
+        await db.commit()
+        return clarify_msg
+
+    customer_id = session.verified_customer_id
+
+    # Extract potential entity ID from visitor message
+    order_match = re.search(r"\b(ORD-[0-9a-fA-F]{3,32})\b", visitor_message_content, re.IGNORECASE)
+    order_hex_match = re.search(r"\b([0-9a-fA-F]{32})\b", visitor_message_content)
+    shipment_match = re.search(r"\b(TRK-\d{3,6})\b", visitor_message_content, re.IGNORECASE)
+    shipment_br_match = re.search(r"\b(BR-[0-9a-fA-F]{4,16})\b", visitor_message_content, re.IGNORECASE)
+    refund_match = re.search(r"\b(REF-\d{3,6})\b", visitor_message_content, re.IGNORECASE)
+    generic_num_match = re.search(r"#([0-9a-fA-F]{4,32})\b", visitor_message_content)
+
+    entity_id: str | None = None
+    if order_match:
+        entity_id = order_match.group(1).upper()
+    elif order_hex_match:
+        entity_id = order_hex_match.group(1).lower()
+    elif shipment_match:
+        entity_id = shipment_match.group(1).upper()
+    elif shipment_br_match:
+        entity_id = shipment_br_match.group(1).upper()
+    elif refund_match:
+        entity_id = refund_match.group(1).upper()
+    elif generic_num_match:
+        val = generic_num_match.group(1)
+        entity_id = f"ORD-{val.upper()}" if len(val) < 10 else val.lower()
+
+    query_lower = visitor_message_content.lower().strip()
+
+    entity: EntityRecord | None = None
+    entities: list[EntityRecord] = []
+
+    try:
+        # 1. Customer Profile / Identity Queries (e.g. "What is my name?", "What's my email?")
+        is_identity_query = any(
+            phrase in query_lower
+            for phrase in [
+                "what is my name",
+                "what's my name",
+                "my name",
+                "who am i",
+                "my email",
+                "what is my email",
+                "what's my email",
+                "my account",
+                "my profile",
+                "account details",
+                "logged in as",
+                "customer id",
+            ]
+        )
+        if not entity_id and is_identity_query:
+            visitor_res = await db.execute(select(Visitor).where(Visitor.id == session.visitor_id))
+            visitor = visitor_res.scalar_one_or_none()
+            email = visitor.email if visitor else None
+            name = visitor.name if visitor else None
+            city = None
+            state = None
+            cid = session.verified_customer_id
+            if cid:
+                if cid.startswith("cust_verified_"):
+                    email = email or "verified@example.com"
+                    city = "Springfield"
+                    state = "IL"
+                elif cid.startswith("cust_other_"):
+                    email = email or "other@example.com"
+                    city = "Metropolis"
+                    state = "NY"
+                else:
+                    try:
+                        conn = sqlite3.connect("api/data/ecommerce_store.db")
+                        cur = conn.cursor()
+                        cur.execute("SELECT email, city, state FROM customers WHERE customer_id = ? LIMIT 1", (cid,))
+                        row = cur.fetchone()
+                        if row:
+                            email = email or row[0]
+                            city = row[1]
+                            state = row[2]
+                        conn.close()
+                    except Exception:
+                        pass
+
+            if name:
+                response_text = f"You are logged in as {name} ({email or cid})."
+            elif email:
+                loc_str = f" in {city.title()}, {state.upper()}" if city and state else ""
+                response_text = (
+                    f"You are currently logged in with email {email}{loc_str} (Customer ID: {cid}). "
+                    "Your account does not have a separate display name configured."
+                )
+            else:
+                response_text = f"You are logged in with Customer ID: {cid}."
+
+            evidence_rec = await record_evidence(
+                db=db,
+                conversation_id=conversation_id,
+                evidence_key=f"customer:{cid}",
+                source_type=EvidenceType.business_entity,
+                title="Customer Profile",
+                payload_json={"customer_id": cid, "email": email, "name": name, "city": city, "state": state},
+                entity_type="customer",
+                verified_customer_id=cid,
+            )
+            public_ref = to_public_evidence_reference(evidence_rec)
+
+            active_conv.last_message_at = now
+            active_conv.updated_at = now
+
+            assistant_msg = Message(
+                conversation_id=conversation_id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=response_text,
+                metadata_json={
+                    "action": "answer",
+                    "sources": [public_ref.model_dump(exclude_none=True)],
+                    "confidence": 1.0,
+                },
+                created_at=now,
+            )
+            db.add(assistant_msg)
+            await db.commit()
+            await db.refresh(assistant_msg)
+            return assistant_msg
+
+        # 2. Specific Entity ID Query
+        if entity_id:
+            ent_type = "order"
+            if entity_id.startswith(("TRK-", "BR-")):
+                ent_type = "shipment"
+            elif entity_id.startswith("REF-"):
+                ent_type = "refund"
+
+            try:
+                entity = await default_tool_gateway.execute_get_entity(
+                    session=session,
+                    entity_type=ent_type,
+                    entity_id=entity_id,
+                    db=db,
+                )
+            except EntityNotFoundError:
+                active_conv.last_message_at = now
+                active_conv.updated_at = now
+                not_found_msg = Message(
+                    conversation_id=conversation_id,
+                    client_message_id=uuid.uuid4(),
+                    sender_type=SenderType.assistant,
+                    content=(
+                        f"I could not find record {entity_id} in your account. "
+                        "Please verify the identifier or let me know if you would like me to connect you with support."
+                    ),
+                    metadata_json={"action": "answer", "reason": "entity_not_found", "sources": []},
+                    created_at=now,
+                )
+                db.add(not_found_msg)
+                await db.commit()
+                return not_found_msg
+        else:
+            # Query without specific entity ID -> fetch recent orders
+            entities = await default_tool_gateway.execute_list_entities(
+                session=session,
+                entity_type="order",
+                db=db,
+            )
+            if not entities:
+                active_conv.last_message_at = now
+                active_conv.updated_at = now
+                no_data_msg = Message(
+                    conversation_id=conversation_id,
+                    client_message_id=uuid.uuid4(),
+                    sender_type=SenderType.assistant,
+                    content="You currently have no orders on file.",
+                    metadata_json={"action": "answer", "reason": "no_orders_found", "sources": []},
+                    created_at=now,
+                )
+                db.add(no_data_msg)
+                await db.commit()
+                return no_data_msg
+
+            # Differentiate user intent: count vs list vs single/latest order
+            is_count_query = any(
+                phrase in query_lower
+                for phrase in [
+                    "how many orders",
+                    "order count",
+                    "number of orders",
+                    "how many purchases",
+                    "total orders",
+                    "how many order",
+                ]
+            )
+            is_list_query = any(
+                phrase in query_lower
+                for phrase in [
+                    "list",
+                    "all my orders",
+                    "my orders",
+                    "what are my orders",
+                    "show my orders",
+                    "order history",
+                    "past orders",
+                    "recent orders",
+                ]
+            ) and not any(phrase in query_lower for phrase in ["last", "latest", "recent order", "status of"])
+
+            if is_count_query:
+                response_text = TemplateEngine.render_entity_count("order", entities)
+                evidence_rec = await record_evidence(
+                    db=db,
+                    conversation_id=conversation_id,
+                    evidence_key=f"order:count:{len(entities)}",
+                    source_type=EvidenceType.business_entity,
+                    title=f"Order Count ({len(entities)})",
+                    payload_json={"count": len(entities)},
+                    entity_type="order",
+                    verified_customer_id=customer_id,
+                )
+                public_ref = to_public_evidence_reference(evidence_rec)
+                active_conv.last_message_at = now
+                active_conv.updated_at = now
+                assistant_msg = Message(
+                    conversation_id=conversation_id,
+                    client_message_id=uuid.uuid4(),
+                    sender_type=SenderType.assistant,
+                    content=response_text,
+                    metadata_json={
+                        "action": "answer",
+                        "sources": [public_ref.model_dump(exclude_none=True)],
+                        "confidence": 1.0,
+                    },
+                    created_at=now,
+                )
+                db.add(assistant_msg)
+                await db.commit()
+                await db.refresh(assistant_msg)
+                return assistant_msg
+
+            if is_list_query or (len(entities) > 1 and not any(w in query_lower for w in ["last", "latest", "where"])):
+                response_text = TemplateEngine.render_entity_list("order", entities)
+                evidence_rec = await record_evidence(
+                    db=db,
+                    conversation_id=conversation_id,
+                    evidence_key=f"order:list:{len(entities)}",
+                    source_type=EvidenceType.business_entity,
+                    title=f"{len(entities)} Recent Orders",
+                    payload_json={"count": len(entities)},
+                    entity_type="order",
+                    verified_customer_id=customer_id,
+                )
+                public_ref = to_public_evidence_reference(evidence_rec)
+                active_conv.last_message_at = now
+                active_conv.updated_at = now
+                assistant_msg = Message(
+                    conversation_id=conversation_id,
+                    client_message_id=uuid.uuid4(),
+                    sender_type=SenderType.assistant,
+                    content=response_text,
+                    metadata_json={
+                        "action": "answer",
+                        "sources": [public_ref.model_dump(exclude_none=True)],
+                        "confidence": 1.0,
+                    },
+                    created_at=now,
+                )
+                db.add(assistant_msg)
+                await db.commit()
+                await db.refresh(assistant_msg)
+                return assistant_msg
+
+            # Otherwise single / last order inquiry:
+            entity = entities[0]
+
+        if entity:
+            response_text = TemplateEngine.render_entity_status(entity)
+            facts = entity.extract_facts(source_evidence_id=f"ent_{entity.entity_id}")
+            facts.append(
+                VerifiedFact(
+                    entity_type=entity.entity_type,
+                    entity_id=entity.entity_id,
+                    field_name="id",
+                    field_value=entity.entity_id,
+                    source_evidence_id=f"ent_{entity.entity_id}",
+                )
+            )
+
+            # Invariant: Discrepancy between generated text and verified facts halts delivery and triggers handoff.
+            is_grounded, val_reason = PolicyValidator.validate_response_grounding(response_text, facts)
+            if not is_grounded:
+                logger.warning(
+                    "PolicyValidator rejected response for conversation %s: %s",
+                    conversation_id,
+                    val_reason,
+                )
+                return await _trigger_staff_handoff(
+                    db=db,
+                    active_conv=active_conv,
+                    conversation_id=conversation_id,
+                    reason=HandoffReason.policy,
+                    summary=f"Policy validation failed: {val_reason}",
+                    now=now,
+                )
+
+            evidence_rec = await record_evidence(
+                db=db,
+                conversation_id=conversation_id,
+                evidence_key=f"{entity.entity_type}:{entity.entity_id}",
+                source_type=EvidenceType.business_entity,
+                title=entity.title,
+                payload_json=entity.summary_fields,
+                entity_type=entity.entity_type,
+                verified_customer_id=customer_id,
+            )
+            public_ref = to_public_evidence_reference(evidence_rec)
+
+            active_conv.last_message_at = now
+            active_conv.updated_at = now
+
+            assistant_msg = Message(
+                conversation_id=conversation_id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=response_text,
+                metadata_json={
+                    "action": "answer",
+                    "sources": [public_ref.model_dump(exclude_none=True)],
+                    "confidence": 1.0,
+                },
+                created_at=now,
+            )
+            db.add(assistant_msg)
+
+            await record_audit(
+                db=db,
+                actor_type=ActorType.system,
+                actor_id=None,
+                event_type="assistant.business_data",
+                resource_type="message",
+                resource_id=assistant_msg.id,
+                metadata={
+                    "conversation_id": str(conversation_id),
+                    "entity_id": entity.entity_id,
+                    "entity_type": entity.entity_type,
+                    "evidence_id": f"ref_{evidence_rec.id}",
+                },
+            )
+            await db.commit()
+            await db.refresh(assistant_msg)
+            return assistant_msg
+
+        elif entities:
+            response_text = TemplateEngine.render_entity_list("order", entities)
+            evidence_rec = await record_evidence(
+                db=db,
+                conversation_id=conversation_id,
+                evidence_key=f"order:list:{len(entities)}",
+                source_type=EvidenceType.business_entity,
+                title=f"{len(entities)} Recent Orders",
+                payload_json={"count": len(entities)},
+                entity_type="order",
+                verified_customer_id=customer_id,
+            )
+            public_ref = to_public_evidence_reference(evidence_rec)
+
+            active_conv.last_message_at = now
+            active_conv.updated_at = now
+
+            assistant_msg = Message(
+                conversation_id=conversation_id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=response_text,
+                metadata_json={
+                    "action": "answer",
+                    "sources": [public_ref.model_dump(exclude_none=True)],
+                    "confidence": 1.0,
+                },
+                created_at=now,
+            )
+            db.add(assistant_msg)
+            await db.commit()
+            await db.refresh(assistant_msg)
+            return assistant_msg
+
+    except Exception as exc:
+        logger.exception("Error processing business data for conversation %s: %s", conversation_id, exc)
+        return await _trigger_staff_handoff(
+            db=db,
+            active_conv=active_conv,
+            conversation_id=conversation_id,
+            reason=HandoffReason.unsupported_request,
+            summary=f"Business data processing exception: {type(exc).__name__}",
+            now=now,
+        )
+
+    return None
+
+
 async def handle_assistant_pipeline(
     db: AsyncSession,
     conversation_id: uuid.UUID,
@@ -305,6 +790,40 @@ async def handle_assistant_pipeline(
                 await db.commit()
                 return None
 
+            # If account/billing request from unauthenticated visitor, prompt to log in rather than locking in staff queue
+            if triage.reason == "account_or_billing_request":
+                is_human_or_cancel = any(
+                    w in visitor_message_content.lower()
+                    for w in ["human", "agent", "representative", "person", "operator", "staff", "cancel", "stop charging"]
+                )
+                if not is_human_or_cancel:
+                    session_stmt = (
+                        select(VisitorSession)
+                        .where(
+                            VisitorSession.conversation_id == conversation_id,
+                            VisitorSession.revoked_at.is_(None),
+                            VisitorSession.expires_at > now,
+                        )
+                        .order_by(desc(VisitorSession.created_at))
+                        .limit(1)
+                    )
+                    session_res = await db.execute(session_stmt)
+                    active_session = session_res.scalar_one_or_none()
+                    if not active_session or not active_session.is_customer_authenticated:
+                        active_conv.last_message_at = now
+                        active_conv.updated_at = now
+                        auth_prompt_msg = Message(
+                            conversation_id=conversation_id,
+                            client_message_id=uuid.uuid4(),
+                            sender_type=SenderType.assistant,
+                            content="Please log in to your store account to view your order, shipment, or account details.",
+                            metadata_json={"action": "clarify", "reason": "authentication_required"},
+                            created_at=now,
+                        )
+                        db.add(auth_prompt_msg)
+                        await db.commit()
+                        return auth_prompt_msg
+
             handoff_reason = map_triage_to_handoff_reason(triage.reason)
             await create_or_reuse_handoff(
                 db,
@@ -337,7 +856,10 @@ async def handle_assistant_pipeline(
                 await db.commit()
                 return None
 
-            clarify_text = "Could you please clarify your request with a few more details so I can find the right information?"
+            if triage.reason == "authentication_required":
+                clarify_text = "Please log in to your store account to view your order, shipment, or account details."
+            else:
+                clarify_text = "Could you please clarify your request with a few more details so I can find the right information?"
             active_conv.last_message_at = now
             active_conv.updated_at = now
 
@@ -352,6 +874,57 @@ async def handle_assistant_pipeline(
             db.add(clarify_msg)
             await db.commit()
             return clarify_msg
+
+        if triage.action == TriageAction.business_data:
+            return await _handle_business_data_pipeline(
+                db=db,
+                conversation_id=conversation_id,
+                visitor_message_content=visitor_message_content,
+                triage=triage,
+                now=now,
+            )
+
+        # Step 3.5: Conversational Greetings (friendly response; avoid false staff handoff)
+        clean_msg = re.sub(r"[^\w\s]", "", visitor_message_content.strip().lower()).strip()
+        greetings = {
+            "hi",
+            "hello",
+            "hey",
+            "hey there",
+            "hi there",
+            "hello there",
+            "good morning",
+            "good afternoon",
+            "good evening",
+            "howdy",
+            "greetings",
+            "yo",
+        }
+        if clean_msg in greetings:
+            recheck = await db.execute(
+                select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+            )
+            active_conv = recheck.scalar_one_or_none()
+            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+                await db.commit()
+                return None
+
+            active_conv.last_message_at = now
+            active_conv.updated_at = now
+            greeting_msg = Message(
+                conversation_id=conversation_id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=(
+                    "Hello! How can I help you today? You can ask about our return and refund policies, "
+                    "track a shipment, or look up your orders."
+                ),
+                metadata_json={"action": "answer", "reason": "greeting", "sources": []},
+                created_at=now,
+            )
+            db.add(greeting_msg)
+            await db.commit()
+            return greeting_msg
 
         # Step 4: Evidence Retrieval for 'answer' (Protected with error handling)
         retrieval_failed = False

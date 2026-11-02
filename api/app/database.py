@@ -7,8 +7,10 @@ from app.config import settings
 
 # Import all models to register them with Base
 from app.models import (  # noqa: F401
+    AssistantJob,
     AuditEvent,
     Conversation,
+    EvidenceRecord,
     Handoff,
     KnowledgeChunk,
     KnowledgeDocument,
@@ -20,7 +22,7 @@ from app.models import (  # noqa: F401
     WidgetSettings,
 )
 
-EXPECTED_MIGRATION_REVISION = "0003_knowledge_base"
+EXPECTED_MIGRATION_REVISION = "0007_enterprise_connectors"
 
 engine = create_async_engine(
     settings.DATABASE_URL,

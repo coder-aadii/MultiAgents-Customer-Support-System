@@ -80,7 +80,7 @@ export function createWidgetApiClient(baseUrl?: string) {
       sessionToken = null;
     },
     createSession: async (
-      payload?: { name?: string; email?: string },
+      payload?: { name?: string; email?: string; customer_token?: string },
       signal?: AbortSignal
     ): Promise<WidgetSessionResponse> => {
       const res = await client.post<WidgetSessionResponse>("/widget/sessions", payload || {}, {
