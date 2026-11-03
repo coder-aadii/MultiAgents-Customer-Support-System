@@ -18,7 +18,18 @@ type StatusFilter = "all" | DocumentStatus;
 type IngestionFilter = "all" | IngestionStatus;
 type CreateTab = "upload" | "write";
 
+export interface UploadQueueItem {
+  id: string;
+  file: File;
+  title: string;
+  status: "queued" | "uploading" | "uploaded" | "processing" | "succeeded" | "failed";
+  ingestionStatus?: IngestionStatus;
+  error?: string;
+  documentId?: string;
+}
+
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
+const CONCURRENT_UPLOADS = 2;
 
 export default function Knowledge() {
   const { t } = useTranslation();
@@ -50,10 +61,16 @@ export default function Knowledge() {
   const [createTitle, setCreateTitle] = useState("");
   const [createSourceType, setCreateSourceType] = useState<SourceType>("text");
   const [createContent, setCreateContent] = useState("");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Multi-file upload queue state
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const uploadQueueRef = useRef<UploadQueueItem[]>([]);
+  uploadQueueRef.current = uploadQueue;
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Edit Draft Modal State
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -198,56 +215,188 @@ export default function Knowledge() {
     }
   };
 
-  // Handle Create or Upload
-  const handleCreateSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
+  // File Selection and Multi-Upload Handlers
+  const handleFilesSelected = (selectedFiles: FileList | File[]) => {
+    const filesArray = Array.from(selectedFiles);
+    if (filesArray.length === 0) return;
+
+    const newItems: UploadQueueItem[] = filesArray.map((file, idx) => {
+      const cleanTitle = file.name.replace(/\.[^/.]+$/, "");
+      const isOversized = file.size > MAX_UPLOAD_BYTES;
+      return {
+        id: `${file.name}-${file.size}-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+        file,
+        title: cleanTitle,
+        status: isOversized ? "failed" : "queued",
+        error: isOversized ? t("knowledge.fileOversizedError") : undefined,
+      };
+    });
+
+    setUploadQueue((prev) => [...prev, ...newItems]);
+    setSubmitError(null);
+  };
+
+  const handleUpdateItemTitle = (id: string, newTitle: string) => {
+    setUploadQueue((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, title: newTitle } : item))
+    );
+  };
+
+  const handleRemoveQueueItem = (id: string) => {
+    setUploadQueue((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleClearCompleted = () => {
+    setUploadQueue((prev) =>
+      prev.filter((item) => item.status !== "succeeded" && item.status !== "uploaded")
+    );
+  };
+
+  const handleClearAll = () => {
+    setUploadQueue([]);
+    setSubmitError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const executeUploadQueue = async (itemsToRun: UploadQueueItem[]) => {
+    if (itemsToRun.length === 0 || isUploading) return;
+    setIsUploading(true);
     setSubmitError(null);
 
-    try {
-      if (createTab === "upload") {
-        if (!uploadFile) {
-          setSubmitError(t("knowledge.selectFileError"));
-          setIsSubmitting(false);
-          return;
-        }
-        if (uploadFile.size > MAX_UPLOAD_BYTES) {
-          setSubmitError(t("knowledge.fileOversizedError"));
-          setIsSubmitting(false);
-          return;
-        }
+    const queueIds = itemsToRun.map((it) => it.id);
 
-        const formData = new FormData();
-        formData.append("file", uploadFile);
-        if (createTitle.trim()) {
-          formData.append("title", createTitle.trim());
-        }
+    const worker = async () => {
+      while (queueIds.length > 0) {
+        const currentId = queueIds.shift();
+        if (!currentId) break;
 
-        await knowledgeApi.upload(formData);
-      } else {
-        if (!createTitle.trim()) {
-          setSubmitError(t("knowledge.titleRequiredError"));
-          setIsSubmitting(false);
-          return;
-        }
-        if (!createContent.trim()) {
-          setSubmitError(t("knowledge.contentRequiredError"));
-          setIsSubmitting(false);
-          return;
-        }
+        const currentItem = uploadQueueRef.current.find((it) => it.id === currentId);
+        if (!currentItem || currentItem.status !== "queued") continue;
 
-        await knowledgeApi.create({
-          title: createTitle.trim(),
-          source_type: createSourceType,
-          content: createContent,
-        });
+        // Transition to uploading
+        setUploadQueue((prev) =>
+          prev.map((it) =>
+            it.id === currentId ? { ...it, status: "uploading", error: undefined } : it
+          )
+        );
+
+        try {
+          const formData = new FormData();
+          formData.append("file", currentItem.file);
+          const finalTitle =
+            currentItem.title.trim() || currentItem.file.name.replace(/\.[^/.]+$/, "");
+          formData.append("title", finalTitle);
+
+          const doc = await knowledgeApi.upload(formData, (progressEvent) => {
+            if (progressEvent?.total && progressEvent.loaded >= progressEvent.total) {
+              setUploadQueue((prev) =>
+                prev.map((it) =>
+                  it.id === currentId && it.status === "uploading"
+                    ? { ...it, status: "processing" }
+                    : it
+                )
+              );
+            }
+          });
+
+          const finalStatus =
+            doc.ingestion_status === "ready"
+              ? "succeeded"
+              : doc.ingestion_status === "failed"
+              ? "failed"
+              : "uploaded";
+
+          setUploadQueue((prev) =>
+            prev.map((it) =>
+              it.id === currentId
+                ? {
+                    ...it,
+                    status: finalStatus,
+                    ingestionStatus: doc.ingestion_status,
+                    documentId: doc.id,
+                  }
+                : it
+            )
+          );
+        } catch (err) {
+          const errorMsg = toSafeErrorMessage(err, "Failed to upload file.");
+          setUploadQueue((prev) =>
+            prev.map((it) =>
+              it.id === currentId ? { ...it, status: "failed", error: errorMsg } : it
+            )
+          );
+        }
       }
+    };
+
+    const workerCount = Math.min(CONCURRENT_UPLOADS, queueIds.length);
+    const workers = Array.from({ length: workerCount }, () => worker());
+    await Promise.all(workers);
+
+    setIsUploading(false);
+    await loadDocuments(true);
+  };
+
+  const handleStartUpload = () => {
+    const queuedItems = uploadQueue.filter((it) => it.status === "queued");
+    if (queuedItems.length === 0) {
+      setSubmitError(t("knowledge.selectFileError"));
+      return;
+    }
+    executeUploadQueue(queuedItems);
+  };
+
+  const handleRetryFailed = () => {
+    const failedItems = uploadQueue.filter((it) => it.status === "failed");
+    if (failedItems.length === 0) return;
+
+    setUploadQueue((prev) =>
+      prev.map((it) =>
+        it.status === "failed" ? { ...it, status: "queued", error: undefined } : it
+      )
+    );
+    const reQueued = failedItems.map((it) => ({
+      ...it,
+      status: "queued" as const,
+      error: undefined,
+    }));
+    executeUploadQueue(reQueued);
+  };
+
+  const handleRetryItem = (id: string) => {
+    const item = uploadQueue.find((it) => it.id === id);
+    if (!item) return;
+
+    setUploadQueue((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, status: "queued", error: undefined } : it))
+    );
+    executeUploadQueue([{ ...item, status: "queued", error: undefined }]);
+  };
+
+  // Handle Manual Document Write
+  const handleWriteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createTitle.trim()) {
+      setSubmitError(t("knowledge.titleRequiredError"));
+      return;
+    }
+    if (!createContent.trim()) {
+      setSubmitError(t("knowledge.contentRequiredError"));
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      await knowledgeApi.create({
+        title: createTitle.trim(),
+        source_type: createSourceType,
+        content: createContent,
+      });
 
       setCreateModalOpen(false);
       setCreateTitle("");
       setCreateContent("");
-      setUploadFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
       await loadDocuments(true);
     } catch (err) {
       setSubmitError(toSafeErrorMessage(err, "Failed to create knowledge document."));
@@ -930,136 +1079,400 @@ export default function Knowledge() {
       )}
 
       {/* MODAL: CREATE / UPLOAD DOCUMENT (Admin Only) */}
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-modal-title"
-            className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 space-y-4"
-          >
-            <div className="flex items-center justify-between border-b border-gray-200 pb-3">
-              <h3 id="create-modal-title" className="text-lg font-bold text-gray-900">
-                {t("knowledge.newDocument")}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setCreateModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
+      {createModalOpen && (() => {
+        const queuedCount = uploadQueue.filter((it) => it.status === "queued").length;
+        const uploadingCount = uploadQueue.filter(
+          (it) => it.status === "uploading" || it.status === "processing"
+        ).length;
+        const succeededCount = uploadQueue.filter((it) => it.status === "succeeded").length;
+        const failedCount = uploadQueue.filter((it) => it.status === "failed").length;
+        const completedCount = succeededCount + failedCount;
+        const hasStarted = uploadingCount > 0 || completedCount > 0;
+        const isQueueComplete = uploadQueue.length > 0 && queuedCount === 0 && uploadingCount === 0;
 
-            {submitError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                {submitError}
-              </div>
-            )}
-
-            {/* Modal Tabs */}
-            <div className="flex border-b border-gray-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setCreateTab("upload");
-                  setSubmitError(null);
-                }}
-                className={`py-2 px-4 text-sm font-medium border-b-2 transition-colors ${
-                  createTab === "upload"
-                    ? "border-blue-600 text-blue-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {t("knowledge.uploadTab")}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreateTab("write");
-                  setSubmitError(null);
-                }}
-                className={`py-2 px-4 text-sm font-medium border-b-2 transition-colors ${
-                  createTab === "write"
-                    ? "border-blue-600 text-blue-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {t("knowledge.writeTab")}
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSubmit} className="space-y-4">
-              {/* Optional Custom Title */}
-              <div>
-                <label
-                  htmlFor="create-title"
-                  className="block text-sm font-medium text-gray-700 mb-1"
+        return (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50 flex items-center justify-center p-4">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="create-modal-title"
+              className="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6 space-y-4 max-h-[90vh] flex flex-col"
+            >
+              <div className="flex items-center justify-between border-b border-gray-200 pb-3 shrink-0">
+                <h3 id="create-modal-title" className="text-lg font-bold text-gray-900">
+                  {t("knowledge.newDocument")}
+                </h3>
+                <button
+                  type="button"
+                  disabled={isUploading}
+                  onClick={() => {
+                    if (!isUploading) {
+                      setCreateModalOpen(false);
+                      handleClearAll();
+                    }
+                  }}
+                  className="text-gray-400 hover:text-gray-600 text-lg font-bold disabled:opacity-30"
                 >
-                  {t("knowledge.docTitle")}{" "}
-                  {createTab === "upload" && (
-                    <span className="text-xs text-gray-400 font-normal">
-                      (Optional — defaults to filename)
-                    </span>
-                  )}
-                </label>
-                <input
-                  id="create-title"
-                  type="text"
-                  value={createTitle}
-                  onChange={(e) => setCreateTitle(e.target.value)}
-                  placeholder={
-                    createTab === "upload" ? "e.g. Acme Return Policy" : "e.g. Shipping Guidelines"
-                  }
-                  required={createTab === "write"}
-                  maxLength={255}
-                  className="w-full text-sm border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                  ✕
+                </button>
+              </div>
+
+              {submitError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700 shrink-0">
+                  {submitError}
+                </div>
+              )}
+
+              {/* Modal Tabs */}
+              <div className="flex border-b border-gray-200 shrink-0">
+                <button
+                  type="button"
+                  disabled={isUploading}
+                  onClick={() => {
+                    setCreateTab("upload");
+                    setSubmitError(null);
+                  }}
+                  className={`py-2 px-4 text-sm font-medium border-b-2 transition-colors disabled:opacity-50 ${
+                    createTab === "upload"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {t("knowledge.uploadTab")}
+                </button>
+                <button
+                  type="button"
+                  disabled={isUploading}
+                  onClick={() => {
+                    setCreateTab("write");
+                    setSubmitError(null);
+                  }}
+                  className={`py-2 px-4 text-sm font-medium border-b-2 transition-colors disabled:opacity-50 ${
+                    createTab === "write"
+                      ? "border-blue-600 text-blue-600"
+                      : "border-transparent text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {t("knowledge.writeTab")}
+                </button>
               </div>
 
               {/* Upload Tab Form */}
               {createTab === "upload" && (
-                <div className="space-y-3">
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors bg-gray-50">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      id="file-upload"
-                      accept=".txt,.md,.pdf"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files[0]) {
-                          setUploadFile(e.target.files[0]);
-                          if (!createTitle.trim()) {
-                            setCreateTitle(e.target.files[0].name.replace(/\.[^/.]+$/, ""));
-                          }
+                <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+                  {/* Hidden File Input */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    id="file-upload"
+                    accept=".txt,.md,.pdf"
+                    multiple
+                    disabled={isUploading}
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        handleFilesSelected(e.target.files);
+                        if (fileInputRef.current) fileInputRef.current.value = "";
+                      }
+                    }}
+                    className="hidden"
+                  />
+
+                  {uploadQueue.length === 0 ? (
+                    /* Initial Empty Dropzone */
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        setIsDragging(true);
+                      }}
+                      onDragLeave={() => setIsDragging(false)}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setIsDragging(false);
+                        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                          handleFilesSelected(e.dataTransfer.files);
                         }
                       }}
-                      className="hidden"
-                    />
-                    <label
-                      htmlFor="file-upload"
-                      className="cursor-pointer block space-y-2 text-sm text-gray-600"
+                      className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors bg-gray-50 ${
+                        isDragging ? "border-blue-500 bg-blue-50/50" : "border-gray-300 hover:border-blue-400"
+                      }`}
                     >
-                      <span className="text-3xl block">📄</span>
-                      <span className="text-blue-600 font-medium hover:underline">
-                        {uploadFile ? uploadFile.name : t("knowledge.selectFile")}
-                      </span>
-                      <p className="text-xs text-gray-500">{t("knowledge.dropzoneHint")}</p>
-                      <p className="text-[11px] text-gray-400">{t("knowledge.maxFileSizeHint")}</p>
-                    </label>
-                  </div>
-                  {uploadFile && (
-                    <p className="text-xs text-gray-600">
-                      Selected: <strong>{uploadFile.name}</strong> (
-                      {(uploadFile.size / 1024).toFixed(1)} KB)
-                    </p>
+                      <label
+                        htmlFor="file-upload"
+                        className="cursor-pointer block space-y-2 text-sm text-gray-600"
+                      >
+                        <span className="text-4xl block">📂</span>
+                        <span className="text-blue-600 font-medium hover:underline text-base block">
+                          {t("knowledge.selectFile")}
+                        </span>
+                        <p className="text-xs text-gray-500">
+                          {t("knowledge.dropzoneHintMulti")}
+                        </p>
+                        <p className="text-[11px] text-gray-400">{t("knowledge.maxFileSizeHint")}</p>
+                      </label>
+                    </div>
+                  ) : (
+                    /* Queue Present: Compact Actions & Progress */
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-gray-800">
+                            {t("knowledge.uploadQueueTitle", { count: uploadQueue.length })}
+                          </span>
+                          <span className="text-xs text-gray-400">
+                            ({(uploadQueue.reduce((acc, it) => acc + it.file.size, 0) / 1024).toFixed(1)} KB total)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={isUploading}
+                            onClick={() => fileInputRef.current?.click()}
+                            className="px-2.5 py-1 text-xs text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 rounded font-medium transition-colors disabled:opacity-50"
+                          >
+                            + {t("knowledge.addMoreFiles")}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isUploading}
+                            onClick={handleClearAll}
+                            className="px-2.5 py-1 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors disabled:opacity-50"
+                          >
+                            {t("knowledge.clearAll")}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Overall Progress Bar */}
+                      {hasStarted && (
+                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-1.5">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-medium text-gray-700">
+                              {completedCount} / {uploadQueue.length} files processed
+                              {failedCount > 0 && (
+                                <span className="text-red-600 font-semibold ml-1">
+                                  ({failedCount} failed)
+                                </span>
+                              )}
+                              {succeededCount > 0 && (
+                                <span className="text-green-600 font-semibold ml-1">
+                                  ({succeededCount} succeeded)
+                                </span>
+                              )}
+                            </span>
+                            <span className="text-gray-400 text-[11px]">
+                              Concurrency limit: 2
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden flex">
+                            <div
+                              className="bg-green-500 h-2 transition-all duration-300"
+                              style={{
+                                width: `${(succeededCount / uploadQueue.length) * 100}%`,
+                              }}
+                            />
+                            <div
+                              className="bg-red-500 h-2 transition-all duration-300"
+                              style={{
+                                width: `${(failedCount / uploadQueue.length) * 100}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Scrollable Queue List */}
+                      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                        {uploadQueue.map((item) => (
+                          <div
+                            key={item.id}
+                            className={`p-3 rounded-md border text-sm transition-colors ${
+                              item.status === "succeeded"
+                                ? "bg-green-50/40 border-green-200"
+                                : item.status === "failed"
+                                ? "bg-red-50/40 border-red-200"
+                                : item.status === "uploading" || item.status === "processing"
+                                ? "bg-blue-50/40 border-blue-200"
+                                : "bg-white border-gray-200"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-base select-none">📄</span>
+                                  <span
+                                    className="font-medium text-gray-800 text-xs truncate"
+                                    title={item.file.name}
+                                  >
+                                    {item.file.name}
+                                  </span>
+                                  <span className="text-[11px] text-gray-400 shrink-0">
+                                    ({(item.file.size / 1024).toFixed(1)} KB)
+                                  </span>
+                                </div>
+
+                                {/* Editable Title Input */}
+                                <div className="mt-1.5 flex items-center gap-1.5">
+                                  <label className="text-[11px] text-gray-500 shrink-0 font-medium">
+                                    Title:
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={item.title}
+                                    onChange={(e) => handleUpdateItemTitle(item.id, e.target.value)}
+                                    disabled={isUploading || item.status === "succeeded"}
+                                    placeholder="Document Title"
+                                    maxLength={255}
+                                    className="flex-1 text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
+                                  />
+                                </div>
+
+                                {item.error && (
+                                  <p className="text-xs text-red-600 mt-1 font-medium">
+                                    {item.error}
+                                  </p>
+                                )}
+                              </div>
+
+                              {/* Status Badges & Actions */}
+                              <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                                {item.status === "queued" && (
+                                  <span className="px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-600 font-medium">
+                                    {t("knowledge.stateQueued")}
+                                  </span>
+                                )}
+                                {item.status === "uploading" && (
+                                  <span className="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-700 font-medium animate-pulse flex items-center gap-1">
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
+                                    {t("knowledge.stateUploading")}
+                                  </span>
+                                )}
+                                {item.status === "processing" && (
+                                  <span className="px-2 py-0.5 text-xs rounded bg-amber-100 text-amber-700 font-medium animate-pulse flex items-center gap-1">
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-600 animate-ping" />
+                                    {t("knowledge.stateProcessing")}
+                                  </span>
+                                )}
+                                {item.status === "succeeded" && (
+                                  <span className="px-2 py-0.5 text-xs rounded bg-green-100 text-green-700 font-medium">
+                                    ✓ {t("knowledge.stateSucceeded")}
+                                  </span>
+                                )}
+                                {item.status === "failed" && (
+                                  <span className="px-2 py-0.5 text-xs rounded bg-red-100 text-red-700 font-medium">
+                                    ✕ {t("knowledge.stateFailed")}
+                                  </span>
+                                )}
+
+                                {item.status === "failed" && !isUploading && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRetryItem(item.id)}
+                                    className="p-1 text-xs text-blue-600 hover:text-blue-800 border border-blue-200 rounded hover:bg-blue-50 transition-colors"
+                                    title="Retry this file"
+                                  >
+                                    ↻
+                                  </button>
+                                )}
+
+                                {item.status !== "uploading" && item.status !== "processing" && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveQueueItem(item.id)}
+                                    disabled={isUploading}
+                                    className="p-1 text-xs text-gray-400 hover:text-red-600 transition-colors disabled:opacity-30"
+                                    title="Remove from queue"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
+
+                  {/* Upload Tab Footer */}
+                  <div className="flex items-center justify-between pt-3 border-t border-gray-200 shrink-0">
+                    <div className="flex items-center gap-2">
+                      {failedCount > 0 && !isUploading && (
+                        <button
+                          type="button"
+                          onClick={handleRetryFailed}
+                          className="px-3 py-1.5 text-xs bg-red-50 text-red-700 border border-red-200 rounded-md hover:bg-red-100 font-medium transition-colors"
+                        >
+                          {t("knowledge.retryFailed", { count: failedCount })}
+                        </button>
+                      )}
+                      {succeededCount > 0 && !isUploading && (
+                        <button
+                          type="button"
+                          onClick={handleClearCompleted}
+                          className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+                        >
+                          {t("knowledge.clearCompleted")}
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        disabled={isUploading}
+                        onClick={() => {
+                          setCreateModalOpen(false);
+                          handleClearAll();
+                        }}
+                        className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
+                      >
+                        {isQueueComplete ? "Done" : t("common.cancel")}
+                      </button>
+
+                      {queuedCount > 0 && (
+                        <button
+                          type="button"
+                          disabled={isUploading}
+                          onClick={handleStartUpload}
+                          className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isUploading ? (
+                            <>
+                              <span className="inline-block w-3 h-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                              Uploading...
+                            </>
+                          ) : (
+                            t("knowledge.uploadAll", { count: queuedCount })
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 
               {/* Write Tab Form */}
               {createTab === "write" && (
-                <div className="space-y-4">
+                <form onSubmit={handleWriteSubmit} className="space-y-4 flex-1 overflow-y-auto pr-1">
+                  <div>
+                    <label
+                      htmlFor="create-title"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      {t("knowledge.docTitle")}
+                    </label>
+                    <input
+                      id="create-title"
+                      type="text"
+                      value={createTitle}
+                      onChange={(e) => setCreateTitle(e.target.value)}
+                      placeholder="e.g. Shipping Guidelines"
+                      required
+                      maxLength={255}
+                      className="w-full text-sm border border-gray-300 rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
                   <div>
                     <label
                       htmlFor="create-source-type"
@@ -1095,29 +1508,30 @@ export default function Knowledge() {
                       className="w-full text-sm border border-gray-300 rounded-md p-3 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
-                </div>
-              )}
 
-              <div className="flex justify-end gap-3 pt-3 border-t border-gray-200">
-                <button
-                  type="button"
-                  onClick={() => setCreateModalOpen(false)}
-                  className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
-                >
-                  {t("common.cancel")}
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-50"
-                >
-                  {isSubmitting ? t("common.loading") : t("common.create")}
-                </button>
-              </div>
-            </form>
+                  <div className="flex justify-end gap-3 pt-3 border-t border-gray-200">
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => setCreateModalOpen(false)}
+                      className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {t("common.cancel")}
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium disabled:opacity-50"
+                    >
+                      {isSubmitting ? t("common.loading") : t("common.create")}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL: EDIT DRAFT (Admin Only) */}
       {editModalOpen && editingDoc && (

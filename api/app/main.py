@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from app.api.router import api_v1_router
 from app.common.errors import AppException, format_error_response
 from app.config import settings
 from app.database import check_database_connection, close_db
+from app.services.knowledge_worker import run_ingestion_worker_cycle
 
 structlog.configure(
     processors=[
@@ -59,6 +61,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.validate_production()
     logger.info("application_starting", env=settings.MCSS_ENV)
+    # Recover and drain any lingering or abandoned ingestion jobs from previous crashes/restarts
+    asyncio.create_task(run_ingestion_worker_cycle(worker_id="startup_recovery_worker"))
     yield
     await close_db()
     logger.info("application_shutdown")

@@ -46,8 +46,7 @@ export default function Inbox() {
   const [isWhisper, setIsWhisper] = useState(false);
   const [notes, setNotes] = useState<ConversationNote[]>([]);
 
-  // Take-over / Close action state
-  const [isTakingOver, setIsTakingOver] = useState(false);
+  // Close action state
   const [isClosing, setIsClosing] = useState(false);
   const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
 
@@ -251,24 +250,8 @@ export default function Inbox() {
   }, [messages.length]);
 
   // ---------------------------------------------------------------------------
-  // 4. Take-over & Close Actions
+  // 4. Close Action
   // ---------------------------------------------------------------------------
-  const handleTakeOver = async () => {
-    if (!selectedConvId || isTakingOver) return;
-    setIsTakingOver(true);
-    try {
-      const updated = await conversationsApi.claim(selectedConvId);
-      setActiveConversation(updated);
-      setConversations((prev) =>
-        prev.map((c) => (c.id === updated.id ? { ...c, ...updated } : c))
-      );
-    } catch (err: unknown) {
-      setMessagesError(toSafeErrorMessage(err));
-    } finally {
-      setIsTakingOver(false);
-    }
-  };
-
   const handleClose = async () => {
     if (!selectedConvId || isClosing) return;
 

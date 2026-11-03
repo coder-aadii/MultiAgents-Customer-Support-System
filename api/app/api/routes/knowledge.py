@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.errors import AppException
@@ -37,6 +47,8 @@ from app.services.knowledge_service import (
     retry_document_ingestion,
     update_document,
 )
+from app.config import settings
+from app.services.knowledge_worker import run_ingestion_worker_cycle
 from app.services.retrieval_service import retrieve_knowledge_chunks
 
 knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -68,17 +80,22 @@ async def list_knowledge_documents(
 )
 async def create_knowledge_document(
     payload: DocumentCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_session),
 ) -> DocumentDetailResponse:
-    """Create a draft knowledge document from text or markdown content."""
+    """Create a draft knowledge document and enqueue durable background ingestion."""
+    use_background = settings.MCSS_ENV != "test"
     doc = await create_document(
         db=db,
         title=payload.title,
         source_type=payload.source_type,
         content=payload.content,
         user_id=current_user.id,
+        enqueue_background=use_background,
     )
+    if use_background:
+        background_tasks.add_task(run_ingestion_worker_cycle, worker_id="knowledge_api_worker")
     return await get_document_detail(db, doc.id)
 
 
@@ -88,12 +105,13 @@ async def create_knowledge_document(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_knowledge_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_session),
 ) -> DocumentDetailResponse:
-    """Upload a TXT, Markdown, or PDF file to create a draft knowledge document."""
+    """Upload a TXT, Markdown, or PDF file to create a draft and enqueue background ingestion."""
     try:
         raw_bytes = await file.read()
         source_type, clean_filename = validate_upload(file.filename, raw_bytes)
@@ -104,6 +122,7 @@ async def upload_knowledge_document(
     except IngestionError as e:
         raise AppException(e.code, e.message, status_code=400) from e
 
+    use_background = settings.MCSS_ENV != "test"
     doc = await create_document(
         db=db,
         title=doc_title,
@@ -112,7 +131,10 @@ async def upload_knowledge_document(
         user_id=current_user.id,
         source_filename=clean_filename,
         raw_bytes=None,  # Pre-extracted content avoids duplicate parsing overhead
+        enqueue_background=use_background,
     )
+    if use_background:
+        background_tasks.add_task(run_ingestion_worker_cycle, worker_id="knowledge_api_worker")
     return await get_document_detail(db, doc.id)
 
 
@@ -184,11 +206,17 @@ async def archive_knowledge_document(
 @knowledge_router.post("/documents/{document_id}/retry", response_model=DocumentDetailResponse)
 async def retry_knowledge_document_ingestion(
     document_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_session),
 ) -> DocumentDetailResponse:
-    """Explicitly retry failed ingestion on a draft document."""
-    doc = await retry_document_ingestion(db=db, document_id=document_id, user_id=current_user.id)
+    """Explicitly retry failed ingestion on a draft document via background worker."""
+    use_background = settings.MCSS_ENV != "test"
+    doc = await retry_document_ingestion(
+        db=db, document_id=document_id, user_id=current_user.id, enqueue_background=use_background
+    )
+    if use_background:
+        background_tasks.add_task(run_ingestion_worker_cycle, worker_id="knowledge_api_worker")
     return await get_document_detail(db, doc.id)
 
 

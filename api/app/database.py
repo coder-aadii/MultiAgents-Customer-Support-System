@@ -23,7 +23,7 @@ from app.models import (  # noqa: F401
     WidgetSettings,
 )
 
-EXPECTED_MIGRATION_REVISION = "0015_multi_agent_workflow_tables"
+EXPECTED_MIGRATION_REVISION = "0016_knowledge_ingestion_jobs"
 
 engine = create_async_engine(
     settings.DATABASE_URL,

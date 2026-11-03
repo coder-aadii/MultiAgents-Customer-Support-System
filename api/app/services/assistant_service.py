@@ -955,8 +955,9 @@ async def handle_assistant_pipeline(
                     )
                 ).scalar_one_or_none()
                 if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
-                    active_conv.last_message_at = now
-                    active_conv.updated_at = now
+                    msg_now = datetime.now(UTC)
+                    active_conv.last_message_at = msg_now
+                    active_conv.updated_at = msg_now
                     auth_msg = Message(
                         conversation_id=conversation_id,
                         client_message_id=uuid.uuid4(),

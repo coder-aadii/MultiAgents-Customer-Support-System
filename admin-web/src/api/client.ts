@@ -344,12 +344,16 @@ export const knowledgeApi = {
     const res = await apiClient.post<KnowledgeDocumentDetail>("/knowledge/documents", data);
     return res.data;
   },
-  upload: async (formData: FormData): Promise<KnowledgeDocumentDetail> => {
+  upload: async (
+    formData: FormData,
+    onUploadProgress?: (progressEvent: any) => void
+  ): Promise<KnowledgeDocumentDetail> => {
     const res = await apiClient.post<KnowledgeDocumentDetail>(
       "/knowledge/documents/upload",
       formData,
       {
         headers: { "Content-Type": "multipart/form-data" },
+        onUploadProgress,
       }
     );
     return res.data;

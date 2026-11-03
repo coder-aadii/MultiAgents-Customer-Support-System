@@ -20,6 +20,7 @@ from app.models.knowledge_document import (
 from app.schemas.common import PaginatedResponse
 from app.schemas.knowledge import ChunkResponse, DocumentDetailResponse, DocumentResponse
 from app.services.ingestion_service import process_document_ingestion
+from app.services.knowledge_worker import enqueue_ingestion_job
 from app.tenancy.filter import TenantQueryScoper
 
 
@@ -31,8 +32,9 @@ async def create_document(
     user_id: uuid.UUID,
     source_filename: str | None = None,
     raw_bytes: bytes | None = None,
+    enqueue_background: bool = False,
 ) -> KnowledgeDocument:
-    """Create a new draft knowledge document and trigger synchronous ingestion."""
+    """Create a new draft knowledge document; enqueues background ingestion when enqueue_background=True."""
     doc = KnowledgeDocument(
         title=title,
         source_type=source_type,
@@ -59,9 +61,20 @@ async def create_document(
         },
     )
     db.add(audit)
+
+    if enqueue_background:
+        await enqueue_ingestion_job(
+            db=db,
+            document_id=doc.id,
+            organization_id=doc.organization_id,
+        )
+        await db.commit()
+        await db.refresh(doc)
+        return doc
+
     await db.commit()
 
-    # Run ingestion (extract text, chunk, embed)
+    # Fallback / sync ingestion for tests/tools
     await process_document_ingestion(db, doc, raw_bytes=raw_bytes)
     await db.refresh(doc)
     return doc
@@ -373,8 +386,9 @@ async def retry_document_ingestion(
     db: AsyncSession,
     document_id: uuid.UUID,
     user_id: uuid.UUID,
+    enqueue_background: bool = False,
 ) -> KnowledgeDocument:
-    """Explicit retry of a failed ingestion on a draft document."""
+    """Explicit retry of a failed ingestion on a draft document; enqueues background ingestion when enqueue_background=True."""
     stmt = select(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
     stmt = TenantQueryScoper.apply_scope(stmt, KnowledgeDocument)
     result = await db.execute(stmt)
@@ -396,8 +410,16 @@ async def retry_document_ingestion(
             status_code=400,
         )
 
-    # Run ingestion pipeline
-    await process_document_ingestion(db, doc)
+    # Set document to pending for worker pick-up
+    doc.ingestion_status = IngestionStatus.pending
+    doc.ingestion_error_code = None
+
+    if enqueue_background:
+        await enqueue_ingestion_job(
+            db=db,
+            document_id=doc.id,
+            organization_id=doc.organization_id,
+        )
 
     # Log audit event
     audit = AuditEvent(
@@ -410,5 +432,9 @@ async def retry_document_ingestion(
     )
     db.add(audit)
     await db.commit()
+
+    if not enqueue_background:
+        await process_document_ingestion(db, doc)
+
     await db.refresh(doc)
     return doc

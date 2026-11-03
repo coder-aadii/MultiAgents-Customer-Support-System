@@ -21,7 +21,7 @@ export default function Operations() {
         operationsApi.getMetrics(),
         operationsApi.listTeams(),
         user?.role === "admin"
-          ? operationsApi.listAgents().catch(() => [] as AgentRosterItem[])
+          ? operationsApi.listAgents().then((res: any) => (Array.isArray(res) ? res : res.items || [])).catch(() => [] as AgentRosterItem[])
           : Promise.resolve([] as AgentRosterItem[]),
       ];
 

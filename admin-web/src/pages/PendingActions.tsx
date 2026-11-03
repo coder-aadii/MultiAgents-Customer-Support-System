@@ -36,7 +36,7 @@ export default function PendingActions() {
     try {
       setProcessing(true);
       await actionsApi.approve(action.id, notes.trim() || undefined);
-      notify.success(`Action approved successfully (${action.action_type})`, "Approved");
+      notify.success(`Action approved successfully (${action.action_name})`, "Approved");
       setSelectedAction(null);
       setNotes("");
       await fetchPending();
@@ -55,7 +55,7 @@ export default function PendingActions() {
     try {
       setProcessing(true);
       await actionsApi.reject(action.id, rejectReason.trim());
-      notify.info(`Action rejected (${action.action_type})`, "Rejected");
+      notify.info(`Action rejected (${action.action_name})`, "Rejected");
       setSelectedAction(null);
       setRejectReason("");
       await fetchPending();

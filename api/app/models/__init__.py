@@ -29,6 +29,7 @@ from app.models.conversation import Conversation, ConversationStatus
 from app.models.evidence_record import EvidenceRecord
 from app.models.handoff import Handoff, HandoffReason, HandoffStatus
 from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.knowledge_ingestion_job import IngestionJobStatus, KnowledgeIngestionJob
 from app.models.knowledge_document import (
     DocumentStatus,
     IngestionStatus,
@@ -76,6 +77,8 @@ __all__ = [
     "IngestionStatus",
     "SourceType",
     "KnowledgeChunk",
+    "KnowledgeIngestionJob",
+    "IngestionJobStatus",
     "AuditEvent",
     "ActorType",
     "BusinessAction",
