@@ -123,13 +123,13 @@ async def create_visitor_current_message(
         request_id=request_id,
     )
     if created and settings.MCSS_ASSISTANT_ENABLED:
-        await enqueue_job(
+        job = await enqueue_job(
             db=db,
             conversation_id=session.conversation_id,
             message_id=msg.id,
         )
         await db.commit()
-        background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker")
+        background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker", job_id=job.id)
     return msg
 
 
@@ -198,11 +198,11 @@ async def create_visitor_message(
         request_id=request_id,
     )
     if created and settings.MCSS_ASSISTANT_ENABLED:
-        await enqueue_job(
+        job = await enqueue_job(
             db=db,
             conversation_id=conversation_id,
             message_id=msg.id,
         )
         await db.commit()
-        background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker")
+        background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker", job_id=job.id)
     return msg

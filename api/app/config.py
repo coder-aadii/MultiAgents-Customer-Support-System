@@ -75,6 +75,25 @@ class Settings(BaseSettings):
         default=False,
         description="Whether Tool Gateway should use in-memory mock connectors instead of real enterprise connectors",
     )
+    MCSS_MULTI_AGENT_ORCHESTRATION_ENABLED: bool = Field(
+        default=False,
+        description="Enable Phase 6 multi-agent planning; disabled preserves the classic assistant pipeline",
+    )
+    MCSS_DYNAMIC_TOOL_CALLING_ENABLED: bool = Field(
+        default=False,
+        description="Enable Phase 6 dynamic read-only agent tool calls; disabled preserves static tool routing",
+    )
+    MCSS_MULTI_AGENT_WORKFLOW_ENABLED: bool = Field(
+        default=False,
+        description="Enable Phase 6 durable multi-agent workflow execution",
+    )
+    MCSS_REFLECTION_ENABLED: bool = Field(
+        default=False,
+        description="Enable Phase 6F risk-based resolution reflection; disabled preserves direct validated synthesis",
+    )
+    MCSS_REFLECTION_MAX_REVISIONS: int = Field(default=1, ge=0, le=1)
+    MCSS_REFLECTION_MAX_SUPPLEMENTAL_INVESTIGATIONS: int = Field(default=1, ge=0, le=1)
+    MCSS_REFLECTION_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0.0, le=10.0)
 
     # CORS
     MCSS_CORS_ORIGINS: str = Field(

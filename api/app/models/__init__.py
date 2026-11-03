@@ -4,6 +4,8 @@ from app.models.action_audit_journal import (
     ActionAuditJournal,
 )
 from app.models.assistant_job import AssistantJob, AssistantJobStatus
+from app.models.agent_execution import AgentExecutionAudit
+from app.models.workflow_checkpoint import WorkflowCheckpoint, WorkflowCheckpointStatus
 from app.models.audit_event import ActorType, AuditEvent
 from app.models.business_action import (
     ActionRiskLevel,
@@ -57,6 +59,9 @@ __all__ = [
     "EvidenceRecord",
     "AssistantJob",
     "AssistantJobStatus",
+    "AgentExecutionAudit",
+    "WorkflowCheckpoint",
+    "WorkflowCheckpointStatus",
     "ConnectorDefinition",
     "ConnectorType",
     "AuthType",

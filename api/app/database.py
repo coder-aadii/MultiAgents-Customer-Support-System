@@ -19,10 +19,11 @@ from app.models import (  # noqa: F401
     User,
     Visitor,
     VisitorSession,
+    WorkflowCheckpoint,
     WidgetSettings,
 )
 
-EXPECTED_MIGRATION_REVISION = "0013_support_operations"
+EXPECTED_MIGRATION_REVISION = "0015_multi_agent_workflow_tables"
 
 engine = create_async_engine(
     settings.DATABASE_URL,

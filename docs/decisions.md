@@ -450,4 +450,23 @@ This document records significant implementation decisions made during developme
 
 ---
 
+## 2026-11-03: Risk-Based Resolution Reflection
+
+**Context:** Phase 6F adds multi-agent evidence aggregation and synthesis. Some
+financial, policy, multi-intent, and action-proposal resolutions need a second
+quality review beyond deterministic fact validation.
+
+**Decision:** Add a server-selected, tool-less `ResolutionCriticAgent` after
+initial deterministic validation. Its strict JSON verdict is advisory and
+bounded to one revision and one approved supplemental investigation. The final
+response always undergoes deterministic policy validation; invalid critic
+output, timeout, or provider failure fails closed for mandatory-review cases.
+
+**Rationale:** This catches completeness, uncertainty, policy-interpretation,
+and pending-action language issues without granting an LLM data access, action
+authority, or a way to bypass existing tenant, identity, policy, and human
+takeover controls. The feature is reversible with `MCSS_REFLECTION_ENABLED`.
+
+---
+
 *Add new decisions above this line. Keep chronological order.*

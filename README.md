@@ -1,350 +1,274 @@
 # MCSS — Multi-Agent Customer Support System
 
-A single-tenant customer support application with an AI-powered chat widget, admin console, and knowledge base.
+<p align="center">
+  <strong>Open-source, enterprise-grade AI customer support platform with multi-agent orchestration, pgvector RAG, secure enterprise connectors, controlled action execution, and seamless human agent collaboration.</strong>
+</p>
 
-## Quick Start
+<p align="center">
+  <a href="docs/architecture.md">Architecture</a> •
+  <a href="docs/api.md">API Reference</a> •
+  <a href="docs/threat-model.md">Threat Model</a> •
+  <a href="docs/runbook.md">Operations Runbook</a> •
+  <a href="docs/decisions.md">Architecture Decisions</a>
+</p>
+
+---
+
+## MCSS Introduction
+
+**MCSS (Multi-Agent Customer Support System)** is an open-source, full-stack customer support platform designed to help modern enterprises deploy autonomous AI agent teams safely alongside human support representatives.
+
+MCSS bridges customer-facing touchpoints (embeddable web widgets, email, messaging channels) with internal enterprise systems (orders, inventory, CRM, databases). Built with strict safety guarantees, MCSS provides grounded vector retrieval (RAG) to prevent hallucinations, a two-phase approval protocol for high-impact actions, and guaranteed human agent takeover.
+
+---
+
+## 🚀 Quick Start
+
+### Development Environment
+
+Clone the repository, configure your environment, and start all services using the provided startup script:
 
 ```bash
-# Clone and enter directory
+# Clone the repository
+git clone https://github.com/your-org/mcss.git
 cd mcss
 
-# Copy environment template
+# Copy environment configuration
 cp .env.example .env
 
-# Start development environment
+# Start the full stack (API, Admin Web, Widget, and PostgreSQL)
 ./scripts/dev-up.sh
+```
 
-# Run smoke tests
+Alternatively, start services directly with Docker Compose:
+
+```bash
+# Start core development services
+docker compose up --build -d
+
+# Seed initial admin user
+docker compose exec api python scripts/seed-admin.py
+```
+
+### Useful Variants
+
+```bash
+# Run with expanded background workers (Redis + Celery worker & beat)
+docker compose --profile expanded up -d
+
+# Stop services preserving database state
+./scripts/dev-down.sh
+
+# Run end-to-end smoke verification
 ./scripts/smoke-test.sh
 ```
 
-### Services
+### Service Endpoints
 
-| Service | URL | Description |
-|---------|-----|-------------|
-| API | http://localhost:8000 | FastAPI backend |
-| Admin Web | http://localhost:5173 | React admin console |
-| Widget Demo | http://localhost:5174 | Embeddable widget demo |
-| PostgreSQL | localhost:55432 | Database (internal port 5432) |
+| Service | Endpoint | Description |
+|:---|:---|:---|
+| **API** | `http://localhost:8000` | FastAPI backend & OpenAPI documentation (`/docs`) |
+| **Admin Web** | `http://localhost:5173` | React 19 agent workspace & management console |
+| **Widget Demo** | `http://localhost:5174` | Embeddable customer chat widget demo surface |
+| **PostgreSQL** | `localhost:55432` | PostgreSQL 16 database with `pgvector` extension |
 
-### Health Checks
+### Health Verification
 
 ```bash
-curl http://localhost:8000/healthz  # {"status":"ok"}
-curl http://localhost:8000/readyz   # {"status":"ok"} (verifies DB)
+curl -fsS http://localhost:8000/healthz   # {"status":"ok"}
+curl -fsS http://localhost:8000/readyz    # {"status":"ok"} (verifies database connectivity)
 ```
 
-## Architecture
+---
 
-```
-Visitor Browser ── Widget (IIFE) ──┐
-                                   ├── API (FastAPI) ── PostgreSQL + pgvector
-Admin Browser ── React Console ────┘        │
-                                            └── LLM + Embedding Providers
-```
+## ✨ Features
 
-- **API**: FastAPI, Python 3.11, SQLAlchemy 2, Alembic, Poetry
-- **Admin Web**: React 19, TypeScript, Vite, React Router, Zustand, Tailwind CSS 4
-- **Widget**: React 18, TypeScript, Vite, Shadow DOM, IIFE bundle
-- **Database**: PostgreSQL 16 with pgvector for semantic search
+### 🤖 AI Agent Orchestration & Grounded Triage
+- **Intent Triage Engine** — Automatically classifies incoming requests into policy FAQs, transactional account queries, or human agent escalations.
+- **Strict Hallucination Fencing** — Answers strictly grounded in retrieved evidence; ungrounded or ambiguous queries trigger safe handoff.
+- **Configurable LLM Backends** — Connects to any OpenAI-compatible Chat Completions API with fallback to built-in deterministic test providers.
+- **Streaming & Memory** — Multi-turn conversation context tracking with low-latency response delivery.
 
-## MCSS Lifecycle Phases & Roadmap Structure
+### 📚 Knowledge Base & Semantic Search (RAG)
+- **Document Ingestion Pipeline** — Ingest `.md`, `.txt`, and documentation files with automated sliding-window chunking (~700 tokens).
+- **Native Vector Indexing** — High-performance vector storage powered by PostgreSQL 16 and `pgvector` with HNSW cosine distance indexing.
+- **Verifiable Citations** — Generated answers include citation chips linking directly to source passages and confidence scores.
+- **Knowledge Admin Console** — Full management interface to upload, review, publish, and test semantic retrieval against chunks.
 
-MCSS follows a phased, dependency-ordered architecture:
+### 🔌 Enterprise Connectors & Controlled Actions
+- **Pluggable Connectors** — Standardized adapters for external enterprise backends across REST, GraphQL, and SQL databases.
+- **Two-Phase Action Execution** — Safely perform operations (such as order status lookups, cancellations, or address modifications).
+- **Human-in-the-Loop Approval Gate** — High-risk actions automatically route to the pending actions approval queue (`/actions/pending`).
+- **Cryptographic Idempotency** — Action execution enforces unique idempotency keys to eliminate duplicate transactions.
+
+### 🌐 Omnichannel Message Ingestion
+- **Normalized Ingestion Gateway** — Uniform message schema across heterogeneous communication channels.
+- **Multi-Channel Adapters** — Ready-to-use adapters for Web Widget, Email, SMS, WhatsApp, and Webhooks.
+- **Identity Resolution** — Maps customer phone numbers, emails, and external handles to persistent customer records.
+
+### 👥 Human-AI Collaboration & Live Takeover
+- **Safe Staff Takeover** — Human agents can take over active conversations with a single click from the Admin Inbox (`/inbox`).
+- **AI Silencing Invariant** — AI automation is permanently muted upon staff takeover to prevent conflicting responses.
+- **Agent Workspace** — Filter conversations by lifecycle state (`bot_active`, `waiting_for_staff`, `staff_active`, `resolved`).
+- **Internal Collaboration** — Private internal notes, ticket reassignment, and QA auditing workflows.
+
+### 🎨 Embeddable Customer Chat Widget
+- **Shadow DOM Isolation** — Mounts inside an isolated Shadow DOM root, guaranteeing zero CSS collisions with host store themes.
+- **Lightweight & Privacy-Preserving** — Low-overhead bundle built with React 18 and Vite; session tokens held in memory with no tracking cookies.
+- **Rich Component Support** — Renders interactive citation chips, status badges, action confirmation cards, and survey dialogs.
+
+### 📊 Support Operations & SLA Engine
+- **SLA Tracking & Alerts** — Monitors First Response Time (FRT) and Time to Resolution (TTR) against configured service tier targets.
+- **Customer Satisfaction (CSAT)** — Built-in post-resolution rating surveys and sentiment tracking.
+- **Operational Analytics** — Metrics on ticket volume, automated resolution rates, and agent response efficiency.
+
+---
+
+## 📦 Repository Structure
+
+| Directory | Description | Tech Stack |
+|:---|:---|:---|
+| [api](api) | Core gateway and backend handling triage, RAG retrieval, connectors, actions, and omnichannel routing | Python 3.11 / FastAPI / SQLAlchemy 2 / Alembic |
+| [admin-web](admin-web) | Unified admin and agent workspace with live inbox, knowledge manager, action approvals, and SLA metrics | TypeScript / React 19 / Vite / Tailwind CSS |
+| [widget](widget) | Embeddable, Shadow DOM-isolated customer service chat widget bundle | TypeScript / React 18 / Vite |
+| [docs](docs) | Architecture diagrams, API specifications, threat models, and operational runbooks | Markdown |
+| [e2e](e2e) | Automated end-to-end integration and browser journey test suite | Playwright / TypeScript |
+| [scripts](scripts) | Development lifecycle, database migrations, admin seeding, and smoke testing scripts | Bash / Python |
+
+---
+
+## 🏗️ System Architecture
 
 ```mermaid
-flowchart TD
-    subgraph CoreMVP["Core Foundation & Controlled Assistant (Phases 0–4)"]
-        P0["Phase 0: Foundation & Environment"] --> P1["Phase 1: Identity & Conversation Data"]
-        P1 --> P2["Phase 2: Conversation Surfaces (Widget + Admin)"]
-        P2 --> P3["Phase 3: Knowledge Base & Vector Retrieval"]
-        P3 --> P4["Phase 4: Controlled Assistant & Human Takeover"]
-    end
+graph TB
+  subgraph CustomerSurfaces["Customer Touchpoints"]
+    WIDGET["Web Chat Widget (Shadow DOM)"]
+    OMNI["Omnichannel Adapters (Email, SMS, WhatsApp, Webhooks)"]
+  end
 
-    subgraph Enterprise["Enterprise Platform (Phase 5)"]
-        CoreMVP --> P5A["Phase 5A: Read-Only Business Data Platform"]
-        P5A --> P5B["Phase 5B: Real Enterprise Data Connectors"]
-        P5B --> P5C["Phase 5C: Controlled Business Actions"]
-        P5C --> P5D["Phase 5D: Enterprise Multi-Tenancy & Identity"]
-        P5D --> P5E["Phase 5E: Omnichannel Customer Support"]
-        P5E --> P5F["Phase 5F: Advanced Support Operations"]
-    end
+  subgraph GatewayLayer["API Gateway & Core Services (FastAPI)"]
+    ROUTER["API Router (/api/v1)"]
+    AUTH["Auth & Multi-Tenancy (JWT / RBAC)"]
+    TRIAGE["Triage & Assistant Service"]
+    RETRIEVAL["Vector Retrieval Service"]
+    CONNECTORS["Enterprise Connectors (REST, GraphQL, SQL)"]
+    ACTIONS["Action Engine & Idempotency"]
+    SLA["SLA & Operations Engine"]
+  end
 
-    subgraph Hardening["Production Release (Phase 6)"]
-        Enterprise --> P6["Phase 6: Hardening, Security Verification & Release"]
-    end
+  subgraph AdminSurface["Agent & Supervisor Workspace"]
+    ADMIN["Admin Web Console (React 19)"]
+  end
+
+  subgraph DataLayer["Data & Persistence"]
+    DB[("PostgreSQL 16 + pgvector")]
+    REDIS[("Redis 7 & Celery Workers")]
+  end
+
+  WIDGET --> ROUTER
+  OMNI --> ROUTER
+  ADMIN --> ROUTER
+  ROUTER --> AUTH
+  ROUTER --> TRIAGE
+  TRIAGE --> RETRIEVAL
+  TRIAGE --> CONNECTORS
+  TRIAGE --> ACTIONS
+  ROUTER --> SLA
+  RETRIEVAL --> DB
+  CONNECTORS --> DB
+  ACTIONS --> DB
+  SLA --> DB
+  ROUTER --> DB
+  ROUTER -.-> REDIS
 ```
 
-- **Phases 0–4 (Core Foundation & Controlled Assistant):** Complete single-tenant support MVP with knowledge RAG, PostgreSQL 16 + pgvector, embeddable widget, admin inbox, and safe staff takeover. (Migrations `0001`–`0003`, 97 tests).
-- **Phase 5 (Enterprise Capabilities & Multi-Agent Roadmap):**
-  - **Master Architecture Roadmap:** [`local/MCSS-From-Scratch-docs/phase-5-enterprise.md`](local/MCSS-From-Scratch-docs/phase-5-enterprise.md)
-  - **Implementation Gap Analysis:** [`local/MCSS-From-Scratch-docs/phase-5-gap-analysis.md`](local/MCSS-From-Scratch-docs/phase-5-gap-analysis.md)
-  - **Sub-phase 5A (Read-Only Business Data Support):** [`local/MCSS-From-Scratch-docs/phase-5a-specification.md`](local/MCSS-From-Scratch-docs/phase-5a-specification.md) *(Completed & Verified)*
-    - `5A.1`: Customer Identity Foundation & Organization Context *(Completed — migration `0004_customer_identity`, 19 tests)*
-    - `5A.2`: Typed Evidence References & Schema Generalization *(Completed — migration `0005_evidence_records`, 8 tests)*
-    - `5A.3`: Universal Tool Gateway & Mock Business Connectors *(Completed — 14 tests)*
-    - `5A.4`: Durable Asynchronous Message Processing (`assistant_jobs`) *(Completed — migration `0006_assistant_jobs`, 6 tests)*
-    - `5A.5`: Controlled Fact Templates, Triage Routing & Policy Gate *(Completed — 9 tests)*
-    - `5A.6`: Security Evaluation, Benchmarking & End-to-End Testing *(Completed — 30 benchmark evals, 100% pass rate)*
-  - **Sub-phase 5B (Real Enterprise Data Connectors):** [`local/MCSS-From-Scratch-docs/phase-5b-enterprise-connectors.md`](local/MCSS-From-Scratch-docs/phase-5b-enterprise-connectors.md) *(Completed & Remediated — migration `0007_enterprise_connectors`, 22 connector tests, architectural adapter bridge)*
-  - **Sub-phase 5C (Controlled Business Actions):** [`local/MCSS-From-Scratch-docs/phase-5c-controlled-actions.md`](local/MCSS-From-Scratch-docs/phase-5c-controlled-actions.md) *(Next Implementation Target)*
-  - **Sub-phase 5D (Enterprise Multi-Tenancy & Identity):** [`local/MCSS-From-Scratch-docs/phase-5d-enterprise-tenancy.md`](local/MCSS-From-Scratch-docs/phase-5d-enterprise-tenancy.md) *(Planned)*
-  - **Sub-phase 5E (Omnichannel Customer Support):** [`local/MCSS-From-Scratch-docs/phase-5e-omnichannel.md`](local/MCSS-From-Scratch-docs/phase-5e-omnichannel.md) *(Planned)*
-  - **Sub-phase 5F (Advanced Support Operations):** [`local/MCSS-From-Scratch-docs/phase-5f-support-operations.md`](local/MCSS-From-Scratch-docs/phase-5f-support-operations.md) *(Planned)*
-  - **Strict Milestone Rule:** Each sub-phase has a dedicated executable specification. Implementation proceeds strictly one approved milestone at a time; no code is written directly from high-level roadmap descriptions.
-- **Phase 6 (Hardening, Security Verification & Release):** [`local/MCSS-From-Scratch-docs/phase-6-hardening-release.md`](local/MCSS-From-Scratch-docs/phase-6-hardening-release.md) — Comprehensive security audit, tool authorization gates, prompt injection fencing, and production release rehearsal.
+---
 
-## E-commerce Integration & How It Works
+## 🎨 Storefront Widget Embedding
 
-MCSS functions as an embeddable, AI-grounded customer support plugin for any e-commerce platform (Shopify, WooCommerce, Next.js, or custom storefronts):
-
-```mermaid
-flowchart TD
-    Customer["Store Visitor on Widget"] --> Triage{"MCSS Triage Agent"}
-
-    Triage -->|"FAQ / Policy Question"| RAG["Vector Retrieval (pgvector)"]
-    RAG --> AnswerGen["Grounded Answer Generator"]
-    AnswerGen --> WidgetAnswer["Visitor receives cited answer + source chips"]
-
-    Triage -->|"Order, Refund, Payment, or Human Request"| Handoff["Safe Handoff Protocol"]
-    Handoff --> Queue["Ticket tagged 'Waiting for Staff'"]
-    Queue --> AdminInbox["Admin Inbox Dashboard"]
-    AdminInbox --> StaffTakeover["Staff clicks 'Take over' & resolves"]
-```
-
-### 1. Storefront Embedding (The Customer Surface)
-
-Embed the lightweight widget script in your storefront's layout or theme:
+Embed the lightweight widget in any storefront or web application:
 
 ```html
-<!-- Load MCSS Widget from your hosted support domain -->
-<script src="https://support.yourstore.com/mcss-widget.js"></script>
+<!-- Load MCSS Widget bundle -->
+<script src="https://support.yourdomain.com/mcss-widget.js"></script>
 <script>
   window.MCSSWidget.init({
-    apiBaseUrl: "https://support.yourstore.com/api/v1",
-    title: "Store Support",
-    accentColor: "#1e40af", // Match store brand color
+    apiBaseUrl: "https://support.yourdomain.com/api/v1",
+    title: "Customer Support",
+    accentColor: "#1e40af",
     position: "bottom-right"
   });
 </script>
 ```
 
-- **Shadow DOM Isolation:** The widget mounts inside an open Shadow DOM root to guarantee zero CSS collision between the store theme and the chat UI.
-- **REST Polling & Low Overhead:** Uses standard HTTP polling every 3 seconds while active and open; halts completely when closed/hidden. Session credentials are kept in memory only (no tracking cookies).
+---
 
-### 2. Knowledge Base Ingestion (Store Policies)
+## ⚙️ Configuration
 
-Support staff upload store documentation via the Admin Web (`/knowledge`):
-- **Shipping & Delivery:** Regional transit times, international duties, carrier tiers.
-- **Returns & Exchanges:** Return windows (e.g., 30-day policy), condition requirements, store credit options.
-- **Sizing & Care Guides:** Product dimensions, warranty terms, washing instructions.
-
-Uploaded `.txt`, `.md`, or text-based `.pdf` files are chunked into ~700-token units, embedded into 1536-dimensional unit vectors, and indexed with PostgreSQL pgvector (HNSW cosine similarity).
-
-### 3. Automated Grounded Answers vs Safe Human Handoff
-
-- **Automated FAQ Answers:** General policy questions (*"What are your international shipping rates?"*) trigger retrieval of top published chunks. The generator returns an answer strictly grounded in the retrieved text with verifiable source citation chips.
-- **Zero Hallucination Order/Refund Handoff:** Account queries, order lookups (*"Where is order #12345?"*), payment issues, refund requests, or explicit human requests (*"Talk to an agent"*) bypass the generator and trigger an immediate safe handoff:
-  > *"I’m connecting you with our support team so they can help further."*
-
-### 4. Staff Takeover & Resolution
-
-1. Tickets requiring human action appear in the **"Waiting for staff"** queue in the Admin Inbox (`/inbox`).
-2. An agent clicks **"Take over"**:
-   - Status updates to `staff_active`.
-   - **Safety Invariant:** All further AI model calls are permanently silenced for this ticket to prevent conflicting automated responses.
-3. The agent looks up the order in your e-commerce platform (Shopify/WooCommerce admin) and replies directly in the chat.
-4. The visitor receives real-time staff replies labeled **"Support Agent"**.
-
-## Development
-
-### Prerequisites
-
-- Docker and Docker Compose
-- Node.js 22+ (for local frontend development)
-- Python 3.11+ (for local backend development)
-
-### Commands
-
-```bash
-# Start all services
-./scripts/dev-up.sh
-
-# Stop services (preserves data)
-./scripts/dev-down.sh
-
-# Run smoke tests
-./scripts/smoke-test.sh
-
-# Seed admin user
-docker compose exec api python scripts/seed-admin.py
-
-# View logs
-docker compose logs -f api
-
-# Run backend tests
-docker compose exec api pytest -q
-
-# Run frontend type-check
-docker compose exec admin-web npm run type-check
-docker compose exec widget npm run type-check
-
-# Build frontend
-docker compose exec admin-web npm run build
-docker compose exec widget npm run build
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and configure key application settings:
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `MCSS_ENV` | Environment (development/test/production) | development |
-| `MCSS_DATABASE_URL` | PostgreSQL connection string | postgresql+psycopg://mcss:change-me@postgres:5432/mcss |
-| `MCSS_JWT_SECRET` | JWT signing key (32+ chars) | **required** |
-| `MCSS_CORS_ORIGINS` | Comma-separated allowed origins | http://localhost:5173,http://localhost:5174 |
-| `MCSS_WIDGET_ALLOWED_ORIGIN` | Widget embedding origin | http://localhost:5174 |
-| `MCSS_LLM_BASE_URL` | LLM provider base URL (or "fake") | fake |
-| `MCSS_LLM_API_KEY` | LLM API key | |
-| `MCSS_LLM_CHAT_MODEL` | Chat model name | |
-| `MCSS_EMBEDDING_MODEL` | Embedding model name | |
-| `MCSS_EMBEDDING_DIMENSIONS` | Embedding dimensions | 1536 |
-| `MCSS_RETRIEVAL_MIN_SCORE` | Min cosine similarity for retrieval | 0.72 |
-| `MCSS_ADMIN_EMAIL` | Bootstrap admin email | admin@example.com |
-| `MCSS_ADMIN_PASSWORD` | Bootstrap admin password | **required** |
+|:---|:---|:---|
+| `MCSS_ENV` | Runtime environment (`development`, `test`, `production`) | `development` |
+| `MCSS_API_HOST` | API bind address | `0.0.0.0` |
+| `MCSS_API_PORT` | API bind port | `8000` |
+| `MCSS_DATABASE_URL` | PostgreSQL connection string with `psycopg` driver | `postgresql+psycopg://mcss:change-me@postgres:5432/mcss` |
+| `MCSS_JWT_SECRET` | Secret key for JWT token signing (≥ 32 chars in production) | Required |
+| `MCSS_CORS_ORIGINS` | Comma-separated list of allowed CORS origins | `http://localhost:5173,http://localhost:5174` |
+| `MCSS_WIDGET_ALLOWED_ORIGIN` | Allowed origin header for widget session creation | `http://localhost:5174` |
+| `MCSS_LLM_BASE_URL` | OpenAI-compatible endpoint URL or `fake` for test mode | `fake` |
+| `MCSS_LLM_API_KEY` | API key for LLM provider | Optional in `fake` mode |
+| `MCSS_LLM_CHAT_MODEL` | LLM model identifier (e.g., `gpt-4o`, `claude-3-5-sonnet`) | Provider-specific |
+| `MCSS_EMBEDDING_MODEL` | Text embedding model identifier | Provider-specific |
+| `MCSS_EMBEDDING_DIMENSIONS` | Vector dimension size for pgvector embeddings | `1536` |
+| `MCSS_RETRIEVAL_MIN_SCORE` | Minimum cosine similarity threshold for vector retrieval | `0.72` |
+| `MCSS_ADMIN_EMAIL` | Default bootstrap administrator email | `admin@example.com` |
+| `MCSS_ADMIN_PASSWORD` | Default bootstrap administrator password | Required |
 
-**Production requirements:**
-- `MCSS_JWT_SECRET` ≥ 32 random characters
-- `MCSS_CORS_ORIGINS` explicit domains (no wildcards)
-- `MCSS_LLM_BASE_URL` real provider (not "fake")
-- `MCSS_WIDGET_ALLOWED_ORIGIN` production widget domain
+---
 
-## Testing
-
-### Backend
+## 🧪 Testing & Verification
 
 ```bash
-# Unit and integration tests (fake provider)
+# Run backend unit and integration test suite
 docker compose exec api pytest -q
 
-# With coverage
+# Run backend tests with code coverage
 docker compose exec api pytest --cov=app --cov-report=term-missing
-```
 
-### Frontend
-
-```bash
-# Type checking
+# Run frontend TypeScript type checks
 docker compose exec admin-web npm run type-check
 docker compose exec widget npm run type-check
 
-# Production build
+# Run production asset builds
 docker compose exec admin-web npm run build
 docker compose exec widget npm run build
+
+# Run automated end-to-end browser tests
+docker compose exec e2e npx playwright test
 ```
 
-### E2E (Playwright)
+---
 
-```bash
-# Install Playwright
-docker compose exec admin-web npx playwright install --with-deps
+## 📋 System Requirements
 
-# Run tests
-docker compose exec admin-web npm run test:e2e
-```
+- **CPU**: ≥ 2 Cores (≥ 4 Cores recommended for high-load production)
+- **RAM**: ≥ 4 GiB (≥ 8 GiB recommended)
+- **OS**: Linux / macOS / WSL2
+- **Runtimes**: Docker 24+ with Docker Compose v2+
 
-## Deployment
+---
 
-### Production Compose
+## 📄 Documentation
 
-```bash
-# Create production environment file
-cp .env.example .env.production
-# Edit with production values
+- [Architecture Guide](docs/architecture.md) — Service boundaries, data flows, and subsystem interactions.
+- [API Reference](docs/api.md) — Comprehensive REST API endpoint definitions and schemas.
+- [Security & Threat Model](docs/threat-model.md) — STRIDE threat analysis, asset boundaries, and mitigations.
+- [Operations Runbook](docs/runbook.md) — Deployment, health monitoring, backup, and incident response procedures.
+- [Architecture Decision Log](docs/decisions.md) — Historical architectural decisions and technical trade-offs.
 
-# Deploy with Caddy reverse proxy
-docker compose -f compose.yaml -f compose.prod.yaml up -d
-```
+---
 
-See `docs/runbook.md` for complete deployment, monitoring, and incident response procedures.
+## 📜 License
 
-## Documentation
-
-- [Architecture](docs/architecture.md) — System diagram, service boundaries, data flow
-- [API Reference](docs/api.md) — Complete endpoint documentation
-- [Threat Model](docs/threat-model.md) — STRIDE analysis and mitigations
-- [Runbook](docs/runbook.md) — Operations, deployment, incidents
-- [Decisions](docs/decisions.md) — Implementation decision log
-- [Master Specification](local/MCSS-From-Scratch-docs/00-master-specification.md) — Authoritative baseline specification
-- [Phase 5 Enterprise Roadmap](local/MCSS-From-Scratch-docs/phase-5-enterprise.md) — Master enterprise vision & architecture
-- [Phase 5A Specification](local/MCSS-From-Scratch-docs/phase-5a-specification.md) — Executable milestone specification (Universal Business Data)
-- [Phase 6 Hardening & Release](local/MCSS-From-Scratch-docs/phase-6-hardening-release.md) — Release gate and security verification
-
-## Project Structure
-
-```
-mcss/
-├── AGENTS.md              # Agent instructions
-├── LICENSE                # Apache-2.0
-├── README.md              # This file
-├── .env.example           # Environment template
-├── .gitignore
-├── compose.yaml           # Docker Compose (dev)
-├── docs/
-│   ├── architecture.md
-│   ├── api.md
-│   ├── threat-model.md
-│   ├── runbook.md
-│   └── decisions.md
-├── api/
-│   ├── Dockerfile
-│   ├── pyproject.toml
-│   ├── alembic.ini
-│   ├── alembic/
-│   │   ├── env.py
-│   │   └── versions/
-│   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   ├── dependencies.py
-│   │   ├── api/routes/
-│   │   ├── models/
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   ├── providers/
-│   │   ├── prompts/
-│   │   └── security/
-│   └── tests/
-├── admin-web/
-│   ├── Dockerfile
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── index.html
-│   └── src/
-├── widget/
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   ├── postcss.config.js
-│   ├── demo/
-│   └── src/
-└── scripts/
-    ├── dev-up.sh
-    ├── dev-down.sh
-    ├── seed-admin.py
-    └── smoke-test.sh
-```
-
-## License
-
-Apache-2.0 — see [LICENSE](LICENSE) for details.
-
-## Security
-
-For security issues, see [threat-model.md](docs/threat-model.md) and contact security@example.com.
+This project is licensed under the Apache-2.0 License. See the [LICENSE](LICENSE) file for details.

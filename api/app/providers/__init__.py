@@ -74,8 +74,8 @@ def get_embedding_provider() -> EmbeddingProvider:
         or os.environ.get("MCSS_ENV") == "test"
         or os.environ.get("MCSS_LLM_BASE_URL") == "fake"
         or not settings.LLM_API_KEY
-        or settings.LLM_BASE_URL in ("fake", "http://localhost:3001/v1")
-        or settings.EMBEDDING_MODEL in ("", "replace-me")
+        or settings.LLM_BASE_URL in ("fake", "")
+        or settings.EMBEDDING_MODEL in ("", "replace-me", "fake")
     ):
         return FakeEmbeddingProvider()
 
@@ -95,8 +95,8 @@ def get_llm_provider() -> LLMProvider:
         or os.environ.get("MCSS_ENV") == "test"
         or os.environ.get("MCSS_LLM_BASE_URL") == "fake"
         or not settings.LLM_API_KEY
-        or settings.LLM_BASE_URL in ("fake", "http://localhost:3001/v1")
-        or settings.LLM_CHAT_MODEL in ("", "replace-me")
+        or settings.LLM_BASE_URL in ("fake", "")
+        or settings.LLM_CHAT_MODEL in ("", "replace-me", "fake")
     ):
         return FakeLLMProvider(circuit_breaker=_llm_circuit_breaker)
 

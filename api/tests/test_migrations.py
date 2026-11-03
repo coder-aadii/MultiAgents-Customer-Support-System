@@ -1,10 +1,10 @@
 """Tests for Alembic migrations and database schema."""
 
 import pytest
+from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
 from alembic import command
-from alembic.config import Config
 from app.config import settings
 
 
@@ -60,6 +60,8 @@ def test_migration_lifecycle(alembic_cfg):
         "conversation_internal_notes",
         "sla_policies",
         "csat_surveys",
+        "agent_execution_audits",
+        "workflow_checkpoints",
     }
     for expected in expected_tables:
         assert expected in tables, f"Expected table '{expected}' not found in {tables}"

@@ -4,6 +4,113 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MCSS E-Commerce Customer Support Testbed</title>
+    <style>
+      .mcss-toast-container {
+        position: fixed;
+        top: 20px;
+        right: 24px;
+        z-index: 999999;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        pointer-events: none;
+        max-width: 380px;
+        width: calc(100% - 48px);
+      }
+      .mcss-toast {
+        pointer-events: auto;
+        display: flex;
+        align-items: flex-start;
+        padding: 12px 14px;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+        border: 1px solid #e2e8f0;
+        transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        transform: translateY(0);
+        opacity: 1;
+        animation: toast-slide-in 0.25s ease-out forwards;
+      }
+      .mcss-toast.hiding {
+        transform: translateY(-8px);
+        opacity: 0;
+      }
+      @keyframes toast-slide-in {
+        from {
+          opacity: 0;
+          transform: translateY(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .mcss-toast-icon {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 700;
+        margin-right: 10px;
+        margin-top: 1px;
+      }
+      .mcss-toast-icon.success {
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #86efac;
+      }
+      .mcss-toast-icon.error {
+        background: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fca5a5;
+      }
+      .mcss-toast-icon.warning {
+        background: #fef3c7;
+        color: #b45309;
+        border: 1px solid #fde68a;
+      }
+      .mcss-toast-icon.info {
+        background: #e0e7ff;
+        color: #4338ca;
+        border: 1px solid #c7d2fe;
+      }
+      .mcss-toast-body {
+        flex: 1;
+        min-width: 0;
+      }
+      .mcss-toast-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #0f172a;
+        margin-bottom: 2px;
+        line-height: 1.3;
+      }
+      .mcss-toast-msg {
+        font-size: 12px;
+        color: #475569;
+        line-height: 1.4;
+      }
+      .mcss-toast-close {
+        flex-shrink: 0;
+        border: none;
+        background: transparent;
+        color: #94a3b8;
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 2px 4px;
+        margin-left: 8px;
+        border-radius: 4px;
+      }
+      .mcss-toast-close:hover {
+        color: #334155;
+        background: #f1f5f9;
+      }
+    </style>
   </head>
   <body style="background: #f1f5f9; margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
     <div style="max-width: 800px; margin: 0 auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04); padding: 32px; color: #1e293b;">
@@ -125,6 +232,69 @@
         }
       }
 
+      // Centralized Toast Notification Service
+      const toastService = (() => {
+        let container = document.getElementById("mcss-toast-container");
+        if (!container) {
+          container = document.createElement("div");
+          container.id = "mcss-toast-container";
+          container.className = "mcss-toast-container";
+          document.body.appendChild(container);
+        }
+
+        const icons = {
+          success: "✓",
+          error: "✕",
+          warning: "⚠",
+          info: "ℹ",
+        };
+
+        const show = (message, type = "info", title = "", durationMs = 3500) => {
+          const toast = document.createElement("div");
+          toast.className = `mcss-toast ${type}`;
+
+          toast.innerHTML = `
+            <div class="mcss-toast-icon ${type}">${icons[type] || "ℹ"}</div>
+            <div class="mcss-toast-body">
+              ${title ? `<div class="mcss-toast-title">${title}</div>` : ""}
+              <div class="mcss-toast-msg">${message}</div>
+            </div>
+            <button class="mcss-toast-close" aria-label="Dismiss">&times;</button>
+          `;
+
+          const dismiss = () => {
+            if (toast.classList.contains("hiding")) return;
+            toast.classList.add("hiding");
+            setTimeout(() => {
+              if (toast.parentNode) toast.parentNode.removeChild(toast);
+            }, 250);
+          };
+
+          toast.querySelector(".mcss-toast-close").addEventListener("click", dismiss);
+          container.appendChild(toast);
+
+          if (durationMs > 0) {
+            setTimeout(dismiss, durationMs);
+          }
+        };
+
+        return {
+          show,
+          success: (msg, title = "Success", duration = 3500) => show(msg, "success", title, duration),
+          error: (msg, title = "Error", duration = 4500) => show(msg, "error", title, duration),
+          warning: (msg, title = "Warning", duration = 4000) => show(msg, "warning", title, duration),
+          info: (msg, title = "Info", duration = 3500) => show(msg, "info", title, duration),
+        };
+      })();
+
+      window.copyPrompt = (text) => {
+        navigator.clipboard.writeText(text).then(() => {
+          toastService.success("Copied to clipboard! Paste into the support chat.", "Prompt Copied");
+        }).catch(() => {
+          toastService.error("Failed to copy prompt to clipboard.", "Clipboard Error");
+        });
+      };
+
       function updatePrompts(queries) {
         if (!queries || queries.length === 0) {
           queries = [
@@ -136,7 +306,7 @@
         promptChipsContainer.innerHTML = queries.map(q => `
           <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 12px;">
             <code>${q}</code>
-            <button onclick="navigator.clipboard.writeText('${q.replace(/'/g, "\\'")}'); alert('Copied to clipboard! Paste into the support chat.');" style="padding: 3px 8px; font-size: 11px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; color: #334155;">
+            <button onclick="copyPrompt('${q.replace(/'/g, "\\'")}')" style="padding: 3px 8px; font-size: 11px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; color: #334155;">
               Copy
             </button>
           </div>
@@ -158,10 +328,12 @@
           const data = await res.json();
           sessionStorage.setItem("mcss_customer_token", data.token);
           sessionStorage.setItem("mcss_customer_profile", JSON.stringify(data));
-          location.reload();
+          toastService.success(`Welcome back, ${data.name || data.customer_id}!`, "Signed In");
+          setTimeout(() => location.reload(), 600);
         } catch (err) {
           loginError.innerText = err.message;
           loginError.style.display = "block";
+          toastService.error(err.message, "Login Failed");
         }
       }
 

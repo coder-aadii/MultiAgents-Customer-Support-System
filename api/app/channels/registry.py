@@ -119,7 +119,9 @@ class ChannelRegistry:
 
         # 8. Enqueue assistant background job for processing
         if conversation.status in (ConversationStatus.open, ConversationStatus.waiting_for_staff):
-            await enqueue_job(db, conversation_id=conversation.id, message_id=new_msg.id)
+            job = await enqueue_job(db, conversation_id=conversation.id, message_id=new_msg.id)
+            from app.services.job_worker import run_worker_cycle
+            asyncio.create_task(run_worker_cycle(worker_id="omnichannel_bg_worker", job_id=job.id))
 
         await db.commit()
         return {

@@ -103,6 +103,57 @@ OpenAI-compatible Chat Completions API behind provider adapter:
 - Classification → Retrieval → Answer/Handoff pipeline
 - Structured JSON output with validation
 
+### How MCSS answers a customer question
+
+```mermaid
+flowchart TD
+    Question[Customer question] --> Triage[Triage agent classifies intent]
+
+    Triage -->|Knowledge question| Embed[Embed query]
+    Embed --> Search[pgvector cosine search of published knowledge chunks]
+    Search --> Knowledge[Retrieve original matching chunk text]
+
+    Triage -->|Business-data question| Identity[Verify customer identity]
+    Identity --> Gateway[Controlled Tool Gateway]
+    Gateway --> Facts[Retrieve scoped, structured verified facts]
+
+    Knowledge --> Compose[Answer generation or deterministic template]
+    Facts --> Compose
+    Compose --> Context[Relevant evidence, customer question, and answer rules]
+    Context --> Validate[Schema, evidence, and policy validation]
+    Validate -->|Risk requires review| Critic[Tool-less Resolution Critic]
+    Critic --> Revalidate[Final deterministic revalidation]
+    Revalidate -->|Valid| Response[Backend JSON response]
+    Validate -->|Low-risk valid| Response
+    Response --> Widget[Customer chat widget]
+    Critic -->|Clarify or escalate| Handoff[Safe staff handoff or clarification]
+    Validate -->|Unsupported, low confidence, or invalid| Handoff
+```
+
+Knowledge retrieval stores an embedding alongside the original text for each
+knowledge chunk. The retrieved text—not a vector converted back into text—is
+provided as context to answer generation. Business-data requests never permit
+LLM-generated SQL or direct database access: the server-side Tool Gateway
+enforces customer identity and data scope before returning verified facts.
+
+For risk-based multi-agent resolutions, a deterministic backend policy may add
+a JSON-only, tool-less reflection critic after initial validation. The critic is
+advisory: approval never overrides citation or policy validation, and all high-
+risk approval paths receive a final deterministic revalidation before response
+delivery. Reflection receives only redacted structured findings and opaque
+evidence references; it has no database, connector, or action authority.
+
+### Feature-gated Phase 6 execution
+
+When `MCSS_MULTI_AGENT_ORCHESTRATION_ENABLED=true`, the durable assistant-job
+worker creates the server-owned tenant/conversation context and runs supervisor
+planning, checkpointed specialist execution, evidence aggregation, deterministic
+validation, and (when enabled by risk policy) reflection before it writes a
+message. Every write is preceded by a fresh staff-takeover check. A disabled
+flag retains the established single-pass assistant pipeline. Specialist tools are
+fixed, server-authorized read-only capabilities; Phase 6 does not permit a
+free-form model tool loop.
+
 ## Deployment
 
 Docker Compose with:

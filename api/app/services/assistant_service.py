@@ -300,9 +300,10 @@ async def _trigger_staff_handoff(
         reason=reason,
         summary=summary[:500],
     )
+    msg_now = datetime.now(UTC)
     active_conv.status = ConversationStatus.waiting_for_staff
-    active_conv.last_message_at = now
-    active_conv.updated_at = now
+    active_conv.last_message_at = msg_now
+    active_conv.updated_at = msg_now
 
     handoff_msg = Message(
         conversation_id=conversation_id,
@@ -310,7 +311,7 @@ async def _trigger_staff_handoff(
         sender_type=SenderType.assistant,
         content=HANDOFF_MESSAGE_TEXT,
         metadata_json={"action": "handoff", "reason": summary[:120]},
-        created_at=now,
+        created_at=msg_now,
     )
     db.add(handoff_msg)
     await db.commit()
@@ -349,15 +350,16 @@ async def _handle_business_data_pipeline(
 
     # Invariant: Unverified visitors (IAL < 2) requesting private records are never forwarded to the Tool Gateway.
     if not session or not session.is_customer_authenticated or not session.verified_customer_id:
-        active_conv.last_message_at = now
-        active_conv.updated_at = now
+        msg_now = datetime.now(UTC)
+        active_conv.last_message_at = msg_now
+        active_conv.updated_at = msg_now
         clarify_msg = Message(
             conversation_id=conversation_id,
             client_message_id=uuid.uuid4(),
             sender_type=SenderType.assistant,
             content="Please log in to your store account to view your order, shipment, or account details.",
             metadata_json={"action": "clarify", "reason": "authentication_required"},
-            created_at=now,
+            created_at=msg_now,
         )
         db.add(clarify_msg)
         await db.commit()
@@ -466,8 +468,9 @@ async def _handle_business_data_pipeline(
             )
             public_ref = to_public_evidence_reference(evidence_rec)
 
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             assistant_msg = Message(
                 conversation_id=conversation_id,
@@ -479,7 +482,7 @@ async def _handle_business_data_pipeline(
                     "sources": [public_ref.model_dump(exclude_none=True)],
                     "confidence": 1.0,
                 },
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(assistant_msg)
             await db.commit()
@@ -502,8 +505,9 @@ async def _handle_business_data_pipeline(
                     db=db,
                 )
             except EntityNotFoundError:
-                active_conv.last_message_at = now
-                active_conv.updated_at = now
+                msg_now = datetime.now(UTC)
+                active_conv.last_message_at = msg_now
+                active_conv.updated_at = msg_now
                 not_found_msg = Message(
                     conversation_id=conversation_id,
                     client_message_id=uuid.uuid4(),
@@ -513,7 +517,7 @@ async def _handle_business_data_pipeline(
                         "Please verify the identifier or let me know if you would like me to connect you with support."
                     ),
                     metadata_json={"action": "answer", "reason": "entity_not_found", "sources": []},
-                    created_at=now,
+                    created_at=msg_now,
                 )
                 db.add(not_found_msg)
                 await db.commit()
@@ -526,15 +530,16 @@ async def _handle_business_data_pipeline(
                 db=db,
             )
             if not entities:
-                active_conv.last_message_at = now
-                active_conv.updated_at = now
+                msg_now = datetime.now(UTC)
+                active_conv.last_message_at = msg_now
+                active_conv.updated_at = msg_now
                 no_data_msg = Message(
                     conversation_id=conversation_id,
                     client_message_id=uuid.uuid4(),
                     sender_type=SenderType.assistant,
                     content="You currently have no orders on file.",
                     metadata_json={"action": "answer", "reason": "no_orders_found", "sources": []},
-                    created_at=now,
+                    created_at=msg_now,
                 )
                 db.add(no_data_msg)
                 await db.commit()
@@ -579,8 +584,9 @@ async def _handle_business_data_pipeline(
                     verified_customer_id=customer_id,
                 )
                 public_ref = to_public_evidence_reference(evidence_rec)
-                active_conv.last_message_at = now
-                active_conv.updated_at = now
+                msg_now = datetime.now(UTC)
+                active_conv.last_message_at = msg_now
+                active_conv.updated_at = msg_now
                 assistant_msg = Message(
                     conversation_id=conversation_id,
                     client_message_id=uuid.uuid4(),
@@ -591,7 +597,7 @@ async def _handle_business_data_pipeline(
                         "sources": [public_ref.model_dump(exclude_none=True)],
                         "confidence": 1.0,
                     },
-                    created_at=now,
+                    created_at=msg_now,
                 )
                 db.add(assistant_msg)
                 await db.commit()
@@ -611,8 +617,9 @@ async def _handle_business_data_pipeline(
                     verified_customer_id=customer_id,
                 )
                 public_ref = to_public_evidence_reference(evidence_rec)
-                active_conv.last_message_at = now
-                active_conv.updated_at = now
+                msg_now = datetime.now(UTC)
+                active_conv.last_message_at = msg_now
+                active_conv.updated_at = msg_now
                 assistant_msg = Message(
                     conversation_id=conversation_id,
                     client_message_id=uuid.uuid4(),
@@ -623,7 +630,7 @@ async def _handle_business_data_pipeline(
                         "sources": [public_ref.model_dump(exclude_none=True)],
                         "confidence": 1.0,
                     },
-                    created_at=now,
+                    created_at=msg_now,
                 )
                 db.add(assistant_msg)
                 await db.commit()
@@ -675,8 +682,9 @@ async def _handle_business_data_pipeline(
             )
             public_ref = to_public_evidence_reference(evidence_rec)
 
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             assistant_msg = Message(
                 conversation_id=conversation_id,
@@ -688,7 +696,7 @@ async def _handle_business_data_pipeline(
                     "sources": [public_ref.model_dump(exclude_none=True)],
                     "confidence": 1.0,
                 },
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(assistant_msg)
 
@@ -724,8 +732,9 @@ async def _handle_business_data_pipeline(
             )
             public_ref = to_public_evidence_reference(evidence_rec)
 
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             assistant_msg = Message(
                 conversation_id=conversation_id,
@@ -737,7 +746,7 @@ async def _handle_business_data_pipeline(
                     "sources": [public_ref.model_dump(exclude_none=True)],
                     "confidence": 1.0,
                 },
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(assistant_msg)
             await db.commit()
@@ -818,8 +827,9 @@ async def handle_assistant_pipeline(
                     await db.commit()
                     return None
 
-                active_conv.last_message_at = now
-                active_conv.updated_at = now
+                msg_now = datetime.now(UTC)
+                active_conv.last_message_at = msg_now
+                active_conv.updated_at = msg_now
 
                 if eval_res.decision == ConfirmationDecision.CONFIRMED:
                     if eval_res.action.status == "executing":
@@ -846,7 +856,7 @@ async def handle_assistant_pipeline(
                         "decision": eval_res.decision.value,
                         "action_id": str(eval_res.action.id) if eval_res.action else None,
                     },
-                    created_at=now,
+                    created_at=msg_now,
                 )
                 db.add(action_msg)
                 await db.commit()
@@ -876,15 +886,16 @@ async def handle_assistant_pipeline(
                             )
                         ).scalar_one_or_none()
                         if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
-                            active_conv.last_message_at = now
-                            active_conv.updated_at = now
+                            msg_now = datetime.now(UTC)
+                            active_conv.last_message_at = msg_now
+                            active_conv.updated_at = msg_now
                             fail_msg = Message(
                                 conversation_id=conversation_id,
                                 client_message_id=uuid.uuid4(),
                                 sender_type=SenderType.assistant,
                                 content=reason,
                                 metadata_json={"action": "precondition_failed", "order_id": order_id},
-                                created_at=now,
+                                created_at=msg_now,
                             )
                             db.add(fail_msg)
                             await db.commit()
@@ -916,8 +927,9 @@ async def handle_assistant_pipeline(
                             f"Canceling order {order_id} cannot be undone. "
                             f"Reply '{conf_phrase}' to proceed, or CANCEL to abort."
                         )
-                        active_conv.last_message_at = now
-                        active_conv.updated_at = now
+                        msg_now = datetime.now(UTC)
+                        active_conv.last_message_at = msg_now
+                        active_conv.updated_at = msg_now
                         draft_msg = Message(
                             conversation_id=conversation_id,
                             client_message_id=uuid.uuid4(),
@@ -928,7 +940,7 @@ async def handle_assistant_pipeline(
                                 "action_id": str(draft.action_id),
                                 "required_phrase": conf_phrase,
                             },
-                            created_at=now,
+                            created_at=msg_now,
                         )
                         db.add(draft_msg)
                         await db.commit()
@@ -951,7 +963,7 @@ async def handle_assistant_pipeline(
                         sender_type=SenderType.assistant,
                         content="Please log in to your store account to request order cancellations.",
                         metadata_json={"action": "clarify", "reason": "authentication_required"},
-                        created_at=now,
+                        created_at=msg_now,
                     )
                     db.add(auth_msg)
                     await db.commit()
@@ -1008,15 +1020,16 @@ async def handle_assistant_pipeline(
                     session_res = await db.execute(session_stmt)
                     active_session = session_res.scalar_one_or_none()
                     if not active_session or not active_session.is_customer_authenticated:
-                        active_conv.last_message_at = now
-                        active_conv.updated_at = now
+                        msg_now = datetime.now(UTC)
+                        active_conv.last_message_at = msg_now
+                        active_conv.updated_at = msg_now
                         auth_prompt_msg = Message(
                             conversation_id=conversation_id,
                             client_message_id=uuid.uuid4(),
                             sender_type=SenderType.assistant,
                             content="Please log in to your store account to view your order, shipment, or account details.",
                             metadata_json={"action": "clarify", "reason": "authentication_required"},
-                            created_at=now,
+                            created_at=msg_now,
                         )
                         db.add(auth_prompt_msg)
                         await db.commit()
@@ -1030,8 +1043,9 @@ async def handle_assistant_pipeline(
                 summary=f"Triage handoff: {triage.reason}",
             )
             active_conv.status = ConversationStatus.waiting_for_staff
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             handoff_msg = Message(
                 conversation_id=conversation_id,
@@ -1039,7 +1053,7 @@ async def handle_assistant_pipeline(
                 sender_type=SenderType.assistant,
                 content=HANDOFF_MESSAGE_TEXT,
                 metadata_json={"action": "handoff", "reason": triage.reason},
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(handoff_msg)
             await db.commit()
@@ -1058,8 +1072,9 @@ async def handle_assistant_pipeline(
                 clarify_text = "Please log in to your store account to view your order, shipment, or account details."
             else:
                 clarify_text = "Could you please clarify your request with a few more details so I can find the right information?"
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             clarify_msg = Message(
                 conversation_id=conversation_id,
@@ -1067,7 +1082,7 @@ async def handle_assistant_pipeline(
                 sender_type=SenderType.assistant,
                 content=clarify_text,
                 metadata_json={"action": "clarify", "reason": triage.reason},
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(clarify_msg)
             await db.commit()
@@ -1107,8 +1122,9 @@ async def handle_assistant_pipeline(
                 await db.commit()
                 return None
 
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
             greeting_msg = Message(
                 conversation_id=conversation_id,
                 client_message_id=uuid.uuid4(),
@@ -1118,7 +1134,7 @@ async def handle_assistant_pipeline(
                     "track a shipment, or look up your orders."
                 ),
                 metadata_json={"action": "answer", "reason": "greeting", "sources": []},
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(greeting_msg)
             await db.commit()
@@ -1162,8 +1178,9 @@ async def handle_assistant_pipeline(
                 summary=summary_msg,
             )
             active_conv.status = ConversationStatus.waiting_for_staff
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             handoff_msg = Message(
                 conversation_id=conversation_id,
@@ -1174,7 +1191,7 @@ async def handle_assistant_pipeline(
                     "action": "handoff",
                     "reason": "retrieval_error" if retrieval_failed else "no_evidence_available",
                 },
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(handoff_msg)
             await db.commit()
@@ -1224,8 +1241,9 @@ async def handle_assistant_pipeline(
                 summary=f"Generation handoff: {answer_result.reason or 'unsupported'}",
             )
             active_conv.status = ConversationStatus.waiting_for_staff
-            active_conv.last_message_at = now
-            active_conv.updated_at = now
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
 
             handoff_msg = Message(
                 conversation_id=conversation_id,
@@ -1236,15 +1254,16 @@ async def handle_assistant_pipeline(
                     "action": "handoff",
                     "reason": answer_result.reason or "generator_handoff",
                 },
-                created_at=now,
+                created_at=msg_now,
             )
             db.add(handoff_msg)
             await db.commit()
             return handoff_msg
 
         # Verified grounded answer!
-        active_conv.last_message_at = now
-        active_conv.updated_at = now
+        msg_now = datetime.now(UTC)
+        active_conv.last_message_at = msg_now
+        active_conv.updated_at = msg_now
 
         sources_metadata = [
             {
@@ -1267,7 +1286,7 @@ async def handle_assistant_pipeline(
                 "confidence": round(answer_result.confidence, 4),
                 "sources": sources_metadata,
             },
-            created_at=now,
+            created_at=msg_now,
         )
         db.add(assistant_msg)
 

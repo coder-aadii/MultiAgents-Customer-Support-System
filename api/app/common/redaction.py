@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 SENSITIVE_KEY_PATTERNS = {
@@ -31,6 +32,9 @@ SENSITIVE_KEY_PATTERNS = {
 
 REDACTED_PLACEHOLDER = "[REDACTED]"
 
+_EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d(). -]{6,}\d)(?!\w)")
+
 
 def is_sensitive_key(key: str) -> bool:
     lowered = key.lower().replace("-", "_")
@@ -52,6 +56,33 @@ def redact_sensitive_data(val: Any) -> Any:
     elif isinstance(val, tuple):
         return tuple(redact_sensitive_data(item) for item in val)
     return val
+
+
+def mask_pii(val: Any) -> Any:
+    """Recursively mask common PII before data is persisted to operational logs.
+
+    This is deliberately applied in addition to key-based redaction because agent
+    payloads can contain customer text under otherwise innocuous field names.
+    """
+    if isinstance(val, dict):
+        return {str(key): mask_pii(value) for key, value in val.items()}
+    if isinstance(val, list):
+        return [mask_pii(item) for item in val]
+    if isinstance(val, tuple):
+        return tuple(mask_pii(item) for item in val)
+    if isinstance(val, str):
+        value = _EMAIL_PATTERN.sub("[REDACTED_EMAIL]", val)
+        return _PHONE_PATTERN.sub("[REDACTED_PHONE]", value)
+    return val
+
+
+def sanitize_audit_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove secrets and PII from payloads written to audit journals."""
+    sanitized = redact_sensitive_data(payload)
+    masked = mask_pii(sanitized)
+    if not isinstance(masked, dict):  # Defensive: preserve the declared return contract.
+        return {}
+    return masked
 
 
 def redact_llm_payload_for_logging(payload: dict[str, Any]) -> dict[str, Any]:

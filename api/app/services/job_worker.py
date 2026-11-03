@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import async_session_factory
 from app.models.assistant_job import AssistantJob, AssistantJobStatus
 from app.models.conversation import Conversation, ConversationStatus
@@ -18,11 +19,20 @@ from app.services.assistant_service import (
     create_or_reuse_handoff,
     handle_assistant_pipeline,
 )
+from app.services.multi_agent_service import handle_multi_agent_pipeline
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger("mcss.services.job_worker")
+
+
+def multi_agent_workflow_enabled() -> bool:
+    """Master runtime gate: both orchestration and durable workflow must be enabled."""
+    return bool(
+        settings.MCSS_MULTI_AGENT_ORCHESTRATION_ENABLED
+        and settings.MCSS_MULTI_AGENT_WORKFLOW_ENABLED
+    )
 
 
 async def enqueue_job(
@@ -164,11 +174,19 @@ async def process_claimed_job(
 
     try:
         async with db_factory() as db:
-            result_message = await handle_assistant_pipeline(
-                db=db,
-                conversation_id=conversation_id,
-                visitor_message_content=visitor_content,
-            )
+            if multi_agent_workflow_enabled():
+                result_message = await handle_multi_agent_pipeline(
+                    db=db,
+                    job_id=job_id,
+                    conversation_id=conversation_id,
+                    visitor_message_content=visitor_content,
+                )
+            else:
+                result_message = await handle_assistant_pipeline(
+                    db=db,
+                    conversation_id=conversation_id,
+                    visitor_message_content=visitor_content,
+                )
     except Exception as exc:
         logger.warning(
             "Assistant pipeline failed for job %s: %s",
@@ -271,22 +289,32 @@ async def run_worker_cycle(
     worker_id: str,
     lease_duration_seconds: int = 30,
     db_factory=async_session_factory,
+    job_id: uuid.UUID | None = None,
 ) -> bool:
-    """Claims and processes a single job. Returns True if a job was handled, False if queue was empty."""
-    job_id: uuid.UUID | None = None
+    """Claims and processes jobs until the queue is empty (or a specific job_id first)."""
+    handled_any = False
+    target_job_id = job_id
 
-    async with db_factory() as db:
-        job = await claim_next_job(
-            db=db,
-            worker_id=worker_id,
-            lease_duration_seconds=lease_duration_seconds,
-        )
-        if job:
-            job_id = job.id
-            await db.commit()
+    while True:
+        claimed_id: uuid.UUID | None = None
+        async with db_factory() as db:
+            job = await claim_next_job(
+                db=db,
+                worker_id=worker_id,
+                lease_duration_seconds=lease_duration_seconds,
+                job_id=target_job_id,
+            )
+            if job:
+                claimed_id = job.id
+                await db.commit()
 
-    if not job_id:
-        return False
+        # Clear target_job_id after the first claim attempt so the loop drains remaining jobs
+        target_job_id = None
 
-    await process_claimed_job(job_id=job_id, worker_id=worker_id, db_factory=db_factory)
-    return True
+        if not claimed_id:
+            break
+
+        await process_claimed_job(job_id=claimed_id, worker_id=worker_id, db_factory=db_factory)
+        handled_any = True
+
+    return handled_any

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { actionsApi, type BusinessActionItem } from "../api/client";
+import { useNotification } from "../context/NotificationContext";
 
 export default function PendingActions() {
+  const notify = useNotification();
   const [actions, setActions] = useState<BusinessActionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,11 +36,12 @@ export default function PendingActions() {
     try {
       setProcessing(true);
       await actionsApi.approve(action.id, notes.trim() || undefined);
+      notify.success(`Action approved successfully (${action.action_type})`, "Approved");
       setSelectedAction(null);
       setNotes("");
       await fetchPending();
     } catch (err: any) {
-      alert(err?.response?.data?.detail || "Approval failed");
+      notify.error(err?.response?.data?.detail || "Approval failed", "Error");
     } finally {
       setProcessing(false);
     }
@@ -46,17 +49,18 @@ export default function PendingActions() {
 
   const handleReject = async (action: BusinessActionItem) => {
     if (!rejectReason.trim()) {
-      alert("Please provide a rejection reason.");
+      notify.warning("Please provide a rejection reason.", "Reason Required");
       return;
     }
     try {
       setProcessing(true);
       await actionsApi.reject(action.id, rejectReason.trim());
+      notify.info(`Action rejected (${action.action_type})`, "Rejected");
       setSelectedAction(null);
       setRejectReason("");
       await fetchPending();
     } catch (err: any) {
-      alert(err?.response?.data?.detail || "Rejection failed");
+      notify.error(err?.response?.data?.detail || "Rejection failed", "Error");
     } finally {
       setProcessing(false);
     }
