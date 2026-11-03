@@ -172,6 +172,49 @@ class FakeLLMProvider(LLMProvider):
         text_lower = user_text.lower()
         if any(w in text_lower for w in ["human", "agent", "representative", "person", "operator", "support team", "staff"]):
             return json.dumps({"action": "handoff", "reason": "human_request"})
+        if any(w in text_lower for w in ["legal", "lawyer", "medical", "doctor", "emergency", "security", "exploit", "vulnerability", "hack"]):
+            return json.dumps({"action": "handoff", "reason": "unsafe_domain"})
+        if any(w in text_lower for w in ["world cup", "python script", "simulate", "soccer", "orbit", "weather", "recipe"]):
+            return json.dumps({"action": "handoff", "reason": "unsupported_request"})
+
+        # Generic how-to / process questions, FAQ, definitions -> answer
+        is_process_query = any(
+            p in text_lower
+            for p in [
+                "how can i",
+                "how do i",
+                "how to",
+                "how does",
+                "what does",
+                "what is",
+                "meaning of",
+                "explain",
+                "documentation",
+                "policy",
+                "procedure",
+            ]
+        )
+        is_specific_record = any(
+            p in text_lower
+            for p in [
+                "show my",
+                "list my",
+                "my recent",
+                "recent orders",
+                "when was my order",
+                "when was order",
+                "status of order",
+                "is my order",
+                "track my",
+            ]
+        ) or bool(re.search(r"\b(?:ord-|order\s+[0-9a-f]{6,})\b", text_lower))
+
+        if is_process_query and not is_specific_record:
+            return json.dumps({"action": "answer", "reason": "faq_match"})
+
+        if is_specific_record:
+            return json.dumps({"action": "business_data", "reason": "customer_order_lookup"})
+
         if any(
             w in text_lower
             for w in [
@@ -188,10 +231,6 @@ class FakeLLMProvider(LLMProvider):
             ]
         ):
             return json.dumps({"action": "handoff", "reason": "account_or_billing_request"})
-        if any(w in text_lower for w in ["legal", "lawyer", "medical", "doctor", "emergency", "security", "exploit", "vulnerability", "hack"]):
-            return json.dumps({"action": "handoff", "reason": "unsafe_domain"})
-        if any(w in text_lower for w in ["world cup", "python script", "simulate", "soccer", "orbit", "weather", "recipe"]):
-            return json.dumps({"action": "handoff", "reason": "unsupported_request"})
         if "clarify" in text_lower or "unclear" in text_lower:
             return json.dumps({"action": "clarify", "reason": "missing_detail"})
         return json.dumps({"action": "answer", "reason": "faq_match"})

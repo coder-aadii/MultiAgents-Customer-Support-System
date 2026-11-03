@@ -72,16 +72,15 @@ def get_embedding_provider() -> EmbeddingProvider:
     if (
         settings.is_test_or_fake
         or os.environ.get("MCSS_ENV") == "test"
-        or os.environ.get("MCSS_LLM_BASE_URL") == "fake"
-        or not settings.LLM_API_KEY
-        or settings.LLM_BASE_URL in ("fake", "")
+        or settings.EMBEDDING_BASE_URL in ("fake", "")
+        or not settings.EMBEDDING_API_KEY
         or settings.EMBEDDING_MODEL in ("", "replace-me", "fake")
     ):
         return FakeEmbeddingProvider()
 
     return OpenAIEmbeddingProvider(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
+        base_url=settings.EMBEDDING_BASE_URL,
+        api_key=settings.EMBEDDING_API_KEY,
         model=settings.EMBEDDING_MODEL or "text-embedding-3-small",
         dimensions=settings.EMBEDDING_DIMENSIONS,
         circuit_breaker=_embedding_circuit_breaker,

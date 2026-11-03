@@ -102,8 +102,12 @@ class Settings(BaseSettings):
     )
 
     @property
-    def cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.MCSS_CORS_ORIGINS.split(",")]
+    def cors_origins(self):
+        return [origin.strip() for origin in self.MCSS_CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def cors_origins_list(self):
+        return self.cors_origins
 
     @field_validator("MCSS_ENV")
     @classmethod
@@ -124,12 +128,18 @@ class Settings(BaseSettings):
     MCSS_LLM_CHAT_MODEL: str = Field(default="", description="LLM chat model name")
 
     # Embeddings
+    MCSS_EMBEDDING_BASE_URL: str = Field(
+        default="", description="Embedding provider base URL (falls back to MCSS_LLM_BASE_URL)"
+    )
+    MCSS_EMBEDDING_API_KEY: SecretStr = Field(
+        default=SecretStr(""), description="Embedding API key (falls back to MCSS_LLM_API_KEY)"
+    )
     MCSS_EMBEDDING_MODEL: str = Field(default="", description="Embedding model name")
     MCSS_EMBEDDING_DIMENSIONS: int = Field(default=1536, description="Embedding vector dimensions")
 
     # Retrieval
     MCSS_RETRIEVAL_MIN_SCORE: float = Field(
-        default=0.72, description="Minimum retrieval cosine score"
+        default=0.40, description="Minimum retrieval cosine score"
     )
 
     # Admin bootstrap
@@ -176,6 +186,15 @@ class Settings(BaseSettings):
         return self.MCSS_LLM_CHAT_MODEL
 
     @property
+    def EMBEDDING_BASE_URL(self) -> str:
+        return self.MCSS_EMBEDDING_BASE_URL or self.MCSS_LLM_BASE_URL
+
+    @property
+    def EMBEDDING_API_KEY(self) -> str:
+        val = self.MCSS_EMBEDDING_API_KEY.get_secret_value()
+        return val if val else self.LLM_API_KEY
+
+    @property
     def EMBEDDING_MODEL(self) -> str:
         return self.MCSS_EMBEDDING_MODEL
 
@@ -204,7 +223,7 @@ class Settings(BaseSettings):
         return self.MCSS_CUSTOMER_JWT_SECRET.get_secret_value()
 
     @property
-    def CUSTOMER_JWT_ALGORITHMS(self) -> list[str]:
+    def CUSTOMER_JWT_ALGORITHMS(self):
         return [alg.strip() for alg in self.MCSS_CUSTOMER_JWT_ALGORITHMS.split(",") if alg.strip()]
 
     @property

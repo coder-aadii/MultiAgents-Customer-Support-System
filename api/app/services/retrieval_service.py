@@ -9,7 +9,11 @@ from app.config import settings
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_document import DocumentStatus, KnowledgeDocument
 from app.providers import get_embedding_provider
-from app.schemas.retrieval import RetrievalDebugResponse, RetrievalResponse, RetrievalResultItem
+from app.schemas.retrieval import (
+    RetrievalDebugResponse,
+    RetrievalResponse,
+    RetrievalResultItem,
+)
 from app.tenancy.context import TenantContext
 
 MAX_PROMPT_CONTEXT_CHARS = 4500
@@ -24,14 +28,14 @@ async def retrieve_knowledge_chunks(
     is_debug: bool = False,
     organization_id: uuid.UUID | None = None,
 ) -> RetrievalResponse | RetrievalDebugResponse:
-    """Execute vector cosine similarity retrieval against published documents only.
+    """Retrieve relevant chunks from published knowledge documents.
 
-    Enforces:
-    1. Published-document filter first (status=published).
-    2. Cosine similarity threshold second (default 0.72).
-    3. Top 5 maximum results with deterministic tie-break (doc_id, ordinal).
-    4. 4,500 character context cap retaining top-ranked chunks only.
-    5. Clean DTO results containing citations, scores, and offsets (never raw vectors).
+    Rules:
+    1. Search only published documents in the current tenant.
+    2. Apply the configured cosine similarity threshold.
+    3. Return at most five chunks.
+    4. Limit the retrieved context to approximately 4,500 characters.
+    5. Return clean results without exposing raw embedding vectors.
     """
     clean_query = query.strip()
     effective_threshold = (
@@ -39,16 +43,19 @@ async def retrieve_knowledge_chunks(
     )
     effective_limit = min(max(1, limit), MAX_RETRIEVAL_CHUNKS)
 
+    # Generate the query embedding using the configured provider.
     provider = get_embedding_provider()
     query_vector = await provider.embed_text(clean_query)
 
-    # Cosine distance: 0 is identical, 2 is opposite.
-    # Similarity = 1.0 - distance
+    # Cosine similarity = 1 - cosine distance.
     distance_expr = KnowledgeChunk.embedding.cosine_distance(query_vector)
 
-    effective_org_id = organization_id or TenantContext.get_tenant_id()
+    effective_org_id = (
+        organization_id or TenantContext.get_tenant_id()
+    )
 
-    # Published documents query with HNSW-optimized top-k limit (removes massive doc_full_content from initial scan)
+    # Retrieve candidates belonging to published documents
+    # in the current organization.
     stmt = (
         select(
             KnowledgeChunk.id.label("chunk_id"),
@@ -69,65 +76,103 @@ async def retrieve_knowledge_chunks(
             KnowledgeDocument.id.asc(),
             KnowledgeChunk.ordinal.asc(),
         )
-        .limit(50)  # Guarantees HNSW index graph traversal; bounds scan
+        .limit(50)
     )
 
     result = await db.execute(stmt)
     rows = result.all()
 
-    # First pass: filter by threshold and context character cap
+    # Apply similarity threshold and context-size limit.
     candidate_items: list[dict] = []
     total_accumulated_chars = 0
     doc_ids_to_fetch: set[uuid.UUID] = set()
 
     for row in rows:
         dist: float | None = row.distance
-        raw_sim = 1.0 - float(dist) if dist is not None else 0.0
-        similarity = round(max(0.0, min(1.0, raw_sim)), 4)
+
+        raw_sim = (
+            1.0 - float(dist)
+            if dist is not None
+            else 0.0
+        )
+
+        similarity = round(
+            max(0.0, min(1.0, raw_sim)),
+            4,
+        )
 
         if similarity < effective_threshold:
             continue
 
         chunk_text = row.chunk_content
-        if total_accumulated_chars + len(chunk_text) > MAX_PROMPT_CONTEXT_CHARS and candidate_items:
+
+        if (
+            total_accumulated_chars + len(chunk_text)
+            > MAX_PROMPT_CONTEXT_CHARS
+            and candidate_items
+        ):
             break
 
         doc_ids_to_fetch.add(row.doc_id)
-        candidate_items.append({
-            "chunk_id": row.chunk_id,
-            "chunk_content": chunk_text,
-            "chunk_token_estimate": row.chunk_token_estimate,
-            "doc_id": row.doc_id,
-            "doc_title": row.doc_title,
-            "similarity": similarity,
-        })
+
+        candidate_items.append(
+            {
+                "chunk_id": row.chunk_id,
+                "chunk_content": chunk_text,
+                "chunk_token_estimate": row.chunk_token_estimate,
+                "doc_id": row.doc_id,
+                "doc_title": row.doc_title,
+                "similarity": similarity,
+            }
+        )
+
         total_accumulated_chars += len(chunk_text)
 
         if len(candidate_items) >= effective_limit:
             break
 
-    # Second pass: fetch parent document content only for the <= 5 final matched documents to compute offsets
+    # Fetch parent document content only for selected chunks.
+    # This is used to calculate citation character offsets.
     doc_contents: dict[uuid.UUID, str] = {}
+
     if doc_ids_to_fetch:
         docs_res = await db.execute(
-            select(KnowledgeDocument.id, KnowledgeDocument.content).where(
-                KnowledgeDocument.id.in_(doc_ids_to_fetch)
+            select(
+                KnowledgeDocument.id,
+                KnowledgeDocument.content,
+            ).where(
+                KnowledgeDocument.id.in_(doc_ids_to_fetch),
+                KnowledgeDocument.organization_id == effective_org_id,
             )
         )
-        doc_contents = {row[0]: row[1] for row in docs_res.all()}
+
+        doc_contents = {
+            row[0]: row[1]
+            for row in docs_res.all()
+        }
 
     items: list[RetrievalResultItem] = []
+
     for rank, cand in enumerate(candidate_items, start=1):
         chunk_text = cand["chunk_content"]
-        parent_content = doc_contents.get(cand["doc_id"], "")
+        parent_content = doc_contents.get(
+            cand["doc_id"], ""
+        )
 
         start_char = 0
         end_char = len(chunk_text)
+
         if parent_content:
-            pos = parent_content.find(chunk_text[:min(60, len(chunk_text))])
+            pos = parent_content.find(
+                chunk_text[: min(60, len(chunk_text))]
+            )
+
             if pos != -1:
                 start_char = pos
-                end_char = min(len(parent_content), start_char + len(chunk_text))
+                end_char = min(
+                    len(parent_content),
+                    start_char + len(chunk_text),
+                )
 
         items.append(
             RetrievalResultItem(
@@ -143,6 +188,7 @@ async def retrieve_knowledge_chunks(
             )
         )
 
+    # Standard retrieval response.
     if not is_debug:
         return RetrievalResponse(
             query=clean_query,
@@ -150,11 +196,17 @@ async def retrieve_knowledge_chunks(
             total_found=len(items),
         )
 
-    # For debug view: calculate unpublished matches that would have matched
+    # Debug: count relevant unpublished chunks
+    # belonging only to the current tenant.
     unpub_stmt = (
         select(func.count(KnowledgeChunk.id))
-        .join(KnowledgeDocument, KnowledgeChunk.document_id == KnowledgeDocument.id)
+        .join(
+            KnowledgeDocument,
+            KnowledgeChunk.document_id == KnowledgeDocument.id,
+        )
         .where(
+            KnowledgeDocument.organization_id == effective_org_id,
+            KnowledgeChunk.organization_id == effective_org_id,
             KnowledgeDocument.status != DocumentStatus.published,
             (1.0 - distance_expr) >= effective_threshold,
         )
@@ -162,7 +214,22 @@ async def retrieve_knowledge_chunks(
     unpub_res = await db.execute(unpub_stmt)
     excluded_count = unpub_res.scalar() or 0
 
-    total_chunks_stmt = select(func.count(KnowledgeChunk.id))
+    # Debug: count eligible published chunks in this tenant.
+    # This represents the searchable corpus size, not an
+    # instrumented count of actual database rows examined.
+    total_chunks_stmt = (
+        select(func.count(KnowledgeChunk.id))
+        .join(
+            KnowledgeDocument,
+            KnowledgeChunk.document_id == KnowledgeDocument.id,
+        )
+        .where(
+            KnowledgeDocument.organization_id == effective_org_id,
+            KnowledgeChunk.organization_id == effective_org_id,
+            KnowledgeDocument.status == DocumentStatus.published,
+        )
+    )
+
     total_chunks_res = await db.execute(total_chunks_stmt)
     total_chunks = total_chunks_res.scalar() or 0
 

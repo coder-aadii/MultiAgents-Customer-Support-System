@@ -19,6 +19,7 @@ from app.models.knowledge_ingestion_job import (
     IngestionJobStatus,
     KnowledgeIngestionJob,
 )
+from app.providers.base import ProviderError
 from app.services.ingestion_service import (
     IngestionError,
     process_document_ingestion,
@@ -57,13 +58,15 @@ async def enqueue_ingestion_job(
         return existing
 
     if existing and existing.status == IngestionJobStatus.failed.value:
-        # Re-queue existing failed job for retry
+        # Re-queue existing failed job for retry with fresh attempt budget
         existing.status = IngestionJobStatus.queued.value
+        existing.attempts = 0
         existing.locked_at = None
         existing.locked_by = None
         existing.error_code = None
         existing.error_message = None
         existing.completed_at = None
+        existing.updated_at = datetime.now(UTC)
         await db.flush()
         return existing
 
@@ -197,6 +200,8 @@ async def process_claimed_ingestion_job(
             await db.commit()
             return True
 
+        was_previously_ready = (doc.ingestion_status == IngestionStatus.ready)
+
         # Mark document as processing
         doc.ingestion_status = IngestionStatus.processing
         doc.ingestion_error_code = None
@@ -227,6 +232,9 @@ async def process_claimed_ingestion_job(
             if isinstance(exc, IngestionError):
                 error_code = exc.code
                 error_message = exc.message
+            elif isinstance(exc, ProviderError):
+                error_code = "PROVIDER_ERROR"
+                error_message = str(exc)[:255]
             elif isinstance(exc, asyncio.TimeoutError | TimeoutError):
                 error_code = "TIMEOUT"
                 error_message = "Ingestion operation timed out"
@@ -297,10 +305,11 @@ async def process_claimed_ingestion_job(
                 doc.ingestion_status = IngestionStatus.failed
                 doc.ingestion_error_code = error_code
 
-            # Guarantee no partial chunks remain
-            await db.execute(
-                delete(KnowledgeChunk).where(KnowledgeChunk.document_id == doc_id)
-            )
+            # Only guarantee no partial chunks remain if the document was never previously ready
+            if not was_previously_ready:
+                await db.execute(
+                    delete(KnowledgeChunk).where(KnowledgeChunk.document_id == doc_id)
+                )
             logger.error(
                 "Ingestion job %s permanently failed after %d attempts: %s",
                 job.id, attempts, error_message

@@ -16,8 +16,10 @@ from app.models.knowledge_document import DocumentStatus, IngestionStatus, Knowl
 from app.models.knowledge_ingestion_job import IngestionJobStatus, KnowledgeIngestionJob
 from app.models.organization import Organization
 from app.models.user import User, UserRole
+from app.providers.base import ProviderConnectionError, ProviderError
 from app.security.password import hash_password
 from app.security.tokens import create_access_jwt
+from app.services.ingestion_service import process_document_ingestion
 from app.services.knowledge_worker import (
     claim_next_ingestion_job,
     enqueue_ingestion_job,
@@ -469,3 +471,102 @@ async def test_retry_endpoint_recovers_failed_document():
         assert data["ingestion_status"] == "ready", (
             f"Expected ready after retry, got: {data['ingestion_status']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression Tests for Ingestion Failures & Recovery
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provider_502_error_classification_and_no_missing_greenlet():
+    """Verify HTTP 502 / ProviderConnectionError records PROVIDER_ERROR without MissingGreenlet."""
+    org_id, doc_id = await _make_doc(content="Test document content for 502 handling.")
+
+    async with async_session_factory() as db:
+        res = await db.execute(select(KnowledgeDocument).where(KnowledgeDocument.id == doc_id))
+        doc = res.scalar_one()
+
+        with patch(
+            "app.providers.fake_provider.FakeEmbeddingProvider.embed_batch",
+            side_effect=ProviderConnectionError("Embedding provider server error: status 502"),
+        ):
+            with pytest.raises(ProviderConnectionError):
+                await process_document_ingestion(db, doc)
+
+    # Verify document was cleanly updated with PROVIDER_ERROR
+    async with async_session_factory() as db:
+        res = await db.execute(select(KnowledgeDocument).where(KnowledgeDocument.id == doc_id))
+        doc = res.scalar_one()
+        assert doc.ingestion_status == IngestionStatus.failed
+        assert doc.ingestion_error_code == "PROVIDER_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_existing_chunks_preserved_when_reingestion_fails():
+    """Never delete existing usable chunks if new embedding generation fails."""
+    org_id, doc_id = await _make_doc(content="Original document content with valid chunks.")
+
+    # 1. Successfully ingest document
+    async with async_session_factory() as db:
+        res = await db.execute(select(KnowledgeDocument).where(KnowledgeDocument.id == doc_id))
+        doc = res.scalar_one()
+        await process_document_ingestion(db, doc)
+
+    orig_chunks = await _chunk_count(doc_id)
+    assert orig_chunks > 0, "Document should have chunks after initial ingestion"
+
+    # 2. Simulate re-ingestion failure on provider call
+    async with async_session_factory() as db:
+        res = await db.execute(select(KnowledgeDocument).where(KnowledgeDocument.id == doc_id))
+        doc = res.scalar_one()
+
+        with patch(
+            "app.providers.fake_provider.FakeEmbeddingProvider.embed_batch",
+            side_effect=ProviderConnectionError("Embedding provider server error: status 502"),
+        ):
+            with pytest.raises(ProviderConnectionError):
+                await process_document_ingestion(db, doc)
+
+    # 3. Verify chunks were NOT wiped out
+    remaining_chunks = await _chunk_count(doc_id)
+    assert remaining_chunks == orig_chunks, "Existing chunks must remain intact when re-embedding fails"
+
+
+@pytest.mark.asyncio
+async def test_manual_retry_resets_attempt_budget_and_recovers():
+    """Manual re-queue of a failed job resets attempt counter to 0 and succeeds upon recovery."""
+    org_id, doc_id = await _make_doc(content="Content to be recovered after retry budget reset.")
+
+    # 1. Simulate exhausted failed job with attempts = max_attempts = 3
+    async with async_session_factory() as db:
+        failed_job = KnowledgeIngestionJob(
+            organization_id=org_id,
+            document_id=doc_id,
+            status=IngestionJobStatus.failed.value,
+            attempts=3,
+            max_attempts=3,
+            error_code="PROVIDER_ERROR",
+            error_message="Circuit breaker open",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+        )
+        db.add(failed_job)
+        await db.commit()
+
+    # 2. Manual retry: enqueue_ingestion_job on the failed document
+    async with async_session_factory() as db:
+        requeued_job = await enqueue_ingestion_job(db, doc_id, org_id)
+        assert requeued_job.status == IngestionJobStatus.queued.value
+        assert requeued_job.attempts == 0, "Attempts must be reset to 0 on explicit re-queue"
+        await db.commit()
+
+    # 3. Process the re-queued job in worker cycle
+    await run_ingestion_worker_cycle(worker_id="test-worker")
+
+    latest = await _latest_job(doc_id)
+    assert latest.status == IngestionJobStatus.completed.value
+    assert latest.attempts == 1
+    assert latest.attempts <= latest.max_attempts
+

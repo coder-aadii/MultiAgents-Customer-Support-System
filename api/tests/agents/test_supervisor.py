@@ -182,3 +182,70 @@ async def test_supervisor_simple_intent_fast_path() -> None:
     assert decision.outcome is PlanningOutcome.fast_path
     assert decision.target_agent == "knowledge_specialist"
     assert provider.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_supervisor_fast_path_process_vs_business_data() -> None:
+    provider = FakeLLMProvider()
+    supervisor = SupervisorAgent(provider, registry(all_specialists=True), enabled=True)
+
+    # 1. "How can I check when my order was approved?" -> knowledge_specialist (fast path)
+    d1 = await supervisor.analyze_and_plan(context("How can I check when my order was approved?"))
+    assert d1.outcome is PlanningOutcome.fast_path
+    assert d1.target_agent == "knowledge_specialist"
+
+    # 2. "What does approved mean?" -> knowledge_specialist (fast path)
+    d2 = await supervisor.analyze_and_plan(context("What does approved mean?"))
+    assert d2.outcome is PlanningOutcome.fast_path
+    assert d2.target_agent == "knowledge_specialist"
+
+    # 3. "Show my recent orders" -> business_data_specialist (fast path)
+    d3 = await supervisor.analyze_and_plan(context("Show my recent orders"))
+    assert d3.outcome is PlanningOutcome.fast_path
+    assert d3.target_agent == "business_data_specialist"
+
+    # 4. "When was my order approved?" -> business_data_specialist (fast path)
+    d4 = await supervisor.analyze_and_plan(context("When was my order approved?"))
+    assert d4.outcome is PlanningOutcome.fast_path
+    assert d4.target_agent == "business_data_specialist"
+
+
+@pytest.mark.asyncio
+async def test_supervisor_mixed_intent_plans_dag() -> None:
+    provider = FakeLLMProvider()
+    # Provide canned response for multi-intent planner
+    provider.queue_response(
+        {
+            "user_intents": ["check order approval status", "explain approved definition"],
+            "tasks": [
+                {
+                    "task_id": "lookup_order",
+                    "assigned_agent": "business_data_specialist",
+                    "task_description": "lookup customer order approval status",
+                    "required_inputs": {},
+                    "dependencies": [],
+                },
+                {
+                    "task_id": "explain_approved",
+                    "assigned_agent": "knowledge_specialist",
+                    "task_description": "explain what approved means",
+                    "required_inputs": {},
+                    "dependencies": [],
+                },
+            ],
+        }
+    )
+    supervisor = SupervisorAgent(provider, registry(all_specialists=True), enabled=True)
+
+    decision = await supervisor.analyze_and_plan(
+        context("Is my order approved, and what does approved mean?")
+    )
+
+    # Mixed intent must NOT fast-path; it runs multi-intent plan
+    assert decision.outcome is PlanningOutcome.plan
+    assert len(decision.plan.tasks) == 2
+    assert {t.assigned_agent for t in decision.plan.tasks} == {
+        "business_data_specialist",
+        "knowledge_specialist",
+    }
+

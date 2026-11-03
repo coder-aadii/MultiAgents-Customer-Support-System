@@ -90,7 +90,7 @@ export default function Knowledge() {
   // Retrieval Testbed State
   const [testbedQuery, setTestbedQuery] = useState("");
   const [testbedLimit, setTestbedLimit] = useState(5);
-  const [testbedMinScore, setTestbedMinScore] = useState(0.72);
+  const [testbedMinScore, setTestbedMinScore] = useState(0.40);
   const [testbedLoading, setTestbedLoading] = useState(false);
   const [testbedError, setTestbedError] = useState<string | null>(null);
   const [testbedResponse, setTestbedResponse] = useState<RetrievalDebugResponse | null>(null);
@@ -939,7 +939,7 @@ export default function Knowledge() {
                     </span>
                   </div>
                   <span className="text-xs text-gray-400">
-                    Default production threshold is 0.72.
+                    Default production threshold is 0.40.
                   </span>
                 </div>
 

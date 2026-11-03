@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 import uuid
 
@@ -13,6 +14,7 @@ from app.models.audit_event import AuditEvent
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, SenderType
 from app.models.visitor import Visitor
+from app.models.visitor_session import VisitorSession
 from app.providers import FakeLLMProvider, LLMResponse
 from app.schemas.assistant import TriageAction, TriageResult
 from app.services.triage_service import classify_message
@@ -289,3 +291,116 @@ async def test_triage_excludes_internal_staff_notes(setup_conversation):
         assert "INTERNAL_SECRET" not in full_content
         assert "Visitor visible question" in full_content
         assert "Assistant previous answer" in full_content
+
+
+@pytest.mark.asyncio
+async def test_triage_process_guidance_how_can_i_check(setup_conversation):
+    """Ensure generic process guidance questions route to 'answer'."""
+    conv_id = setup_conversation["conversation_id"]
+    fake_provider = FakeLLMProvider()
+
+    async with async_session_factory() as session:
+        result = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="How can I check when my order was approved?",
+            llm_provider=fake_provider,
+        )
+        await session.commit()
+
+        assert result is not None
+        assert result.action == TriageAction.answer
+        assert result.reason == "faq_match"
+
+
+@pytest.mark.asyncio
+async def test_triage_process_guidance_what_does_approved_mean(setup_conversation):
+    """Ensure definition questions route to 'answer'."""
+    conv_id = setup_conversation["conversation_id"]
+    fake_provider = FakeLLMProvider()
+
+    async with async_session_factory() as session:
+        result = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="What does approved mean?",
+            llm_provider=fake_provider,
+        )
+        await session.commit()
+
+        assert result is not None
+        assert result.action == TriageAction.answer
+        assert result.reason == "faq_match"
+
+
+@pytest.mark.asyncio
+async def test_triage_business_data_authenticated(setup_conversation):
+    """Ensure customer record lookups route to 'business_data' when authenticated."""
+    conv_id = setup_conversation["conversation_id"]
+    vis_id = setup_conversation["visitor_id"]
+    fake_provider = FakeLLMProvider()
+
+    async with async_session_factory() as session:
+        v_session = VisitorSession(
+            id=uuid.uuid4(),
+            visitor_id=vis_id,
+            conversation_id=conv_id,
+            token_hash=f"hash_auth_triage_{uuid.uuid4().hex}",
+            origin="http://localhost:5174",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+            verified_customer_id="cust_test_123",
+            identity_assurance_level=2,
+            customer_token_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(v_session)
+        await session.commit()
+
+    async with async_session_factory() as session:
+        res1 = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="Show my recent orders",
+            llm_provider=fake_provider,
+        )
+        assert res1 is not None
+        assert res1.action == TriageAction.business_data
+
+        res2 = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="When was my order approved?",
+            llm_provider=fake_provider,
+        )
+        assert res2 is not None
+        assert res2.action == TriageAction.business_data
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_triage_business_data_unverified_prompt_to_authenticate(setup_conversation):
+    """Ensure unverified customer record requests require authentication without disclosure."""
+    conv_id = setup_conversation["conversation_id"]
+    fake_provider = FakeLLMProvider()
+
+    async with async_session_factory() as session:
+        res1 = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="Show my recent orders",
+            llm_provider=fake_provider,
+        )
+        assert res1 is not None
+        assert res1.action == TriageAction.clarify
+        assert res1.reason == "authentication_required"
+
+        res2 = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="When was order ORD-123 approved?",
+            llm_provider=fake_provider,
+        )
+        assert res2 is not None
+        assert res2.action == TriageAction.clarify
+        assert res2.reason == "authentication_required"
+        await session.commit()
+

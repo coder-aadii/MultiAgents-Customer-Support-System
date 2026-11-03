@@ -163,14 +163,56 @@ class SupervisorAgent(BaseAgent):
             return "knowledge_specialist"
 
         normalized = message.lower()
+
+        # Check for how-to / process / policy inquiries
+        is_how_to = any(
+            phrase in normalized
+            for phrase in (
+                "how can i",
+                "how do i",
+                "how to",
+                "how does",
+                "what does",
+                "what is",
+                "meaning of",
+                "explain",
+                "faq",
+                "policy",
+                "procedure",
+                "guidance",
+            )
+        )
+
+        # Check for customer-specific record lookups (asking for own records or specific entity)
+        is_record_lookup = any(
+            phrase in normalized
+            for phrase in (
+                "show my",
+                "list my",
+                "when was my",
+                "when was order",
+                "status of order",
+                "my recent",
+                "recent orders",
+                "is my order",
+                "where is my",
+                "track my",
+            )
+        ) or bool(re.search(r"\b(?:ord-|order\s+[0-9a-f]{6,})\b", normalized))
+
         domains = set()
+
         if any(term in normalized for term in ("order", "customer", "purchase")):
-            domains.add("business_data_specialist")
+            if not (is_how_to and not is_record_lookup):
+                domains.add("business_data_specialist")
+
         if any(term in normalized for term in ("tracking", "shipment", "carrier", "delivery", "delayed")):
             domains.add("logistics_specialist")
+
         if any(term in normalized for term in ("refund", "invoice", "billing", "payment", "charge")):
             domains.add("billing_specialist")
-        if any(term in normalized for term in ("policy", "return", "warranty", "hours", "faq")):
+
+        if is_how_to or any(term in normalized for term in ("policy", "return", "warranty", "hours", "faq")):
             domains.add("knowledge_specialist")
 
         return next(iter(domains)) if len(domains) == 1 else None

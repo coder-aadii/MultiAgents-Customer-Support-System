@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_document import IngestionStatus, KnowledgeDocument, SourceType
 from app.providers import get_embedding_provider
+from app.providers.base import ProviderError
 from app.services.chunking import split_into_chunks
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -123,6 +124,10 @@ async def process_document_ingestion(
     Extracts text, chunks it, generates embeddings, and persists chunks idempotently.
     On failure, guarantees no partial chunks remain and records safe error status.
     """
+    doc_id = document.id
+    doc_source_type = document.source_type
+    doc_content = document.content
+
     document.ingestion_status = IngestionStatus.processing
     document.ingestion_error_code = None
     await db.flush()
@@ -132,12 +137,12 @@ async def process_document_ingestion(
 
         # 1. Extract text if raw bytes provided, otherwise use existing document.content
         if raw_bytes is not None:
-            extracted_text = extract_text_from_bytes(document.source_type, raw_bytes)
+            extracted_text = extract_text_from_bytes(doc_source_type, raw_bytes)
             document.content = extracted_text
         else:
-            if not document.content.strip():
+            if not (doc_content and doc_content.strip()):
                 raise IngestionError("EMPTY_CONTENT", "Document content is empty")
-            extracted_text = document.content
+            extracted_text = doc_content
 
         # 2. Chunk text
         chunks = split_into_chunks(extracted_text, target_tokens=700, overlap_tokens=100)
@@ -157,11 +162,11 @@ async def process_document_ingestion(
                 )
 
         # 4. Atomic chunk persistence: delete stale chunks first (idempotent retry)
-        await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
+        await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == doc_id))
 
         for idx, (chunk_item, emb) in enumerate(zip(chunks, embeddings, strict=True)):
             chunk = KnowledgeChunk(
-                document_id=document.id,
+                document_id=doc_id,
                 ordinal=idx,
                 content=chunk_item.content,
                 token_estimate=chunk_item.token_estimate,
@@ -176,18 +181,22 @@ async def process_document_ingestion(
     try:
         await asyncio.wait_for(_run_ingestion(), timeout=INGESTION_TIMEOUT_SECONDS)
     except Exception as exc:
-        # Roll back and delete any partial chunks
+        # Roll back uncommitted transaction
         await db.rollback()
         err_code = "PARSER_FAILED"
         if isinstance(exc, IngestionError):
             err_code = exc.code
+        elif isinstance(exc, ProviderError):
+            err_code = "PROVIDER_ERROR"
         elif isinstance(exc, asyncio.TimeoutError | TimeoutError):
             err_code = "TIMEOUT"
+        else:
+            err_code = "INTERNAL_ERROR"
 
-        await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
+        # Safe update without deleting existing usable chunks
         await db.execute(
             update(KnowledgeDocument)
-            .where(KnowledgeDocument.id == document.id)
+            .where(KnowledgeDocument.id == doc_id)
             .values(
                 ingestion_status=IngestionStatus.failed,
                 ingestion_error_code=err_code,
