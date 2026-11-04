@@ -12,6 +12,7 @@ import {
 } from "../api/client";
 import { toSafeErrorMessage } from "../utils/errors";
 import { LoadingState, EmptyState, ErrorState } from "../components/common/UIStates";
+import { MarkdownView } from "../components/MarkdownView";
 
 type ActiveTab = "documents" | "testbed";
 type StatusFilter = "all" | DocumentStatus;
@@ -54,6 +55,8 @@ export default function Knowledge() {
   const [detailDoc, setDetailDoc] = useState<KnowledgeDocumentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [docViewMode, setDocViewMode] = useState<"formatted" | "raw">("formatted");
+  const [chunkViewMode, setChunkViewMode] = useState<"formatted" | "raw">("formatted");
 
   // Create/Upload Modal State
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -173,6 +176,8 @@ export default function Knowledge() {
     setSelectedDocId(null);
     setDetailDoc(null);
     setDetailError(null);
+    setDocViewMode("formatted");
+    setChunkViewMode("formatted");
   };
 
   // Open Edit Draft Modal
@@ -1062,8 +1067,8 @@ export default function Knowledge() {
                         </div>
                       </div>
 
-                      <div className="bg-gray-50 p-3 rounded border border-gray-200 text-sm text-gray-800 whitespace-pre-wrap font-sans">
-                        {item.content}
+                      <div className="bg-gray-50/70 p-3.5 rounded border border-gray-200">
+                        <MarkdownView content={item.content} compact />
                       </div>
 
                       <div className="text-[11px] text-gray-400 font-mono">
@@ -1694,19 +1699,79 @@ export default function Knowledge() {
 
                 {/* Content Section */}
                 <div>
-                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                    Document Text
-                  </h4>
-                  <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 text-sm font-mono text-gray-800 max-h-48 overflow-y-auto whitespace-pre-wrap">
-                    {detailDoc.content || "(No text content)"}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Document Text
+                    </h4>
+                    <div className="flex items-center space-x-1 bg-gray-100 p-0.5 rounded border border-gray-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setDocViewMode("formatted")}
+                        className={`px-2.5 py-0.5 rounded transition font-medium ${
+                          docViewMode === "formatted"
+                            ? "bg-white text-indigo-700 shadow-2xs"
+                            : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        Formatted View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDocViewMode("raw")}
+                        className={`px-2.5 py-0.5 rounded transition font-medium ${
+                          docViewMode === "raw"
+                            ? "bg-white text-indigo-700 shadow-2xs"
+                            : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        Raw Markdown
+                      </button>
+                    </div>
                   </div>
+                  {docViewMode === "formatted" ? (
+                    <div className="bg-white p-4 rounded-lg border border-gray-200 max-h-64 overflow-y-auto">
+                      <MarkdownView content={detailDoc.content || ""} />
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 text-sm font-mono text-gray-800 max-h-64 overflow-y-auto whitespace-pre-wrap">
+                      {detailDoc.content || "(No text content)"}
+                    </div>
+                  )}
                 </div>
 
                 {/* Chunks Listing Section */}
                 <div>
-                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                    Ingested Chunks ({detailDoc.chunks?.length || 0})
-                  </h4>
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Ingested Chunks ({detailDoc.chunks?.length || 0})
+                    </h4>
+                    {detailDoc.chunks && detailDoc.chunks.length > 0 && (
+                      <div className="flex items-center space-x-1 bg-gray-100 p-0.5 rounded border border-gray-200 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setChunkViewMode("formatted")}
+                          className={`px-2 py-0.5 rounded transition font-medium ${
+                            chunkViewMode === "formatted"
+                              ? "bg-white text-indigo-700 shadow-2xs"
+                              : "text-gray-500 hover:text-gray-700"
+                          }`}
+                        >
+                          Formatted
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setChunkViewMode("raw")}
+                          className={`px-2 py-0.5 rounded transition font-medium ${
+                            chunkViewMode === "raw"
+                              ? "bg-white text-indigo-700 shadow-2xs"
+                              : "text-gray-500 hover:text-gray-700"
+                          }`}
+                        >
+                          Raw
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   {(!detailDoc.chunks || detailDoc.chunks.length === 0) ? (
                     <p className="text-sm text-gray-400 italic">{t("knowledge.noChunksYet")}</p>
                   ) : (
@@ -1714,7 +1779,7 @@ export default function Knowledge() {
                       {detailDoc.chunks.map((chunk) => (
                         <div
                           key={chunk.id}
-                          className="bg-white p-3 rounded border border-gray-200 shadow-2xs space-y-1.5"
+                          className="bg-white p-3.5 rounded border border-gray-200 shadow-2xs space-y-2"
                         >
                           <div className="flex items-center justify-between text-xs text-gray-500">
                             <span className="font-bold text-gray-700">
@@ -1724,9 +1789,15 @@ export default function Knowledge() {
                               ~{chunk.token_estimate} tokens
                             </span>
                           </div>
-                          <p className="text-xs text-gray-800 bg-gray-50 p-2 rounded whitespace-pre-wrap font-mono">
-                            {chunk.content}
-                          </p>
+                          {chunkViewMode === "formatted" ? (
+                            <div className="bg-gray-50/70 p-3 rounded border border-gray-100">
+                              <MarkdownView content={chunk.content} compact />
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-800 bg-gray-50 p-2 rounded whitespace-pre-wrap font-mono">
+                              {chunk.content}
+                            </p>
+                          )}
                           <span className="text-[10px] text-gray-400 font-mono block">
                             ID: {chunk.id}
                           </span>
