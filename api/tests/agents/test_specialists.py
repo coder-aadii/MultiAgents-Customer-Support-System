@@ -107,3 +107,46 @@ async def test_resolution_agent_synthesizes_multiple_findings() -> None:
     assert result.recommendations == (
         "Order ORD-88219 is delayed. No refund has been initiated. The delivery policy has been reviewed.",
     )
+
+
+@pytest.mark.asyncio
+async def test_knowledge_specialist_explains_article_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.schemas.retrieval import RetrievalResponse, RetrievalResultItem
+
+    chunk_id = uuid.uuid4()
+    doc_id = uuid.uuid4()
+    fake_chunk = RetrievalResultItem(
+        chunk_id=chunk_id,
+        document_id=doc_id,
+        document_title="01-order-statuses",
+        rank=1,
+        score=0.88,
+        content="# Order Statuses\n## Supported states\n- shipped: order was recorded as shipped; parcel in transit.",
+        token_estimate=50,
+        start_char=0,
+        end_char=100,
+    )
+
+    async def fake_retrieve(*args: object, **kwargs: object) -> RetrievalResponse:
+        return RetrievalResponse(
+            query="what does shipped mean",
+            results=[fake_chunk],
+            total_found=1,
+        )
+
+    monkeypatch.setattr(
+        "app.agents.specialists.knowledge_agent.retrieve_knowledge_chunks",
+        fake_retrieve,
+    )
+
+    agent = KnowledgeSpecialistAgent()
+    findings = await agent.investigate(
+        context({"query": "what does shipped mean"}, db=SimpleNamespace())
+    )
+
+    assert findings.status is SpecialistStatus.completed
+    assert len(findings.recommendations) == 1
+    explanation = findings.recommendations[0]
+    assert "Review the published policy" not in explanation
+    assert "shipped" in explanation
+    assert any(fact.field_name == "content" for fact in findings.facts)

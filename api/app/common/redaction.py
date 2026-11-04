@@ -36,8 +36,20 @@ _EMAIL_PATTERN = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGN
 _PHONE_PATTERN = re.compile(r"(?<!\w)(?:\+?\d[\d(). -]{6,}\d)(?!\w)")
 
 
+EXCLUDED_FROM_REDACTION = frozenset({
+    "evidence_keys",
+    "primary_key",
+    "foreign_key",
+    "sort_key",
+    "partition_key",
+    "idempotency_key",
+})
+
+
 def is_sensitive_key(key: str) -> bool:
     lowered = key.lower().replace("-", "_")
+    if lowered in EXCLUDED_FROM_REDACTION:
+        return False
     return any(pattern in lowered for pattern in SENSITIVE_KEY_PATTERNS)
 
 

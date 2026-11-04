@@ -192,6 +192,7 @@ class SupervisorAgent(BaseAgent):
                 "when was my",
                 "when was order",
                 "status of order",
+                "status of my",
                 "my recent",
                 "recent orders",
                 "is my order",

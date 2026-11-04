@@ -24,6 +24,10 @@ dependency levels, and at most 4 tasks in any parallel level. Dependencies
 must refer to earlier task IDs and must not form cycles. Request read-only
 investigation only. Never include customer identifiers, credentials, prompts,
 or raw private data in required_inputs.
+Role guidelines:
+- For customer order status, order details, and account order history, assign business_data_specialist.
+- Only assign logistics_specialist when a tracking or shipment identifier (TRK-, SHP-, BR-) is specified.
+- For policy, terms, FAQs, or definitions, assign knowledge_specialist.
 """.strip()
 
 

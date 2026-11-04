@@ -146,8 +146,8 @@ def _fast_path_plan(target_agent: str | None, user_message: str) -> Investigatio
     )
 
 
-_ORDER_ID = re.compile(r"\bORD-[0-9A-Z]{3,32}\b", re.I)
-_SHIPMENT_ID = re.compile(r"\b(?:TRK|SHP)-[0-9A-Z]{3,32}\b", re.I)
+_ORDER_ID = re.compile(r"\b(?:ORD-[0-9A-Z]{3,32}|[0-9a-f]{8,32})\b", re.I)
+_SHIPMENT_ID = re.compile(r"\b(?:TRK|SHP|BR)-[0-9A-Z]{3,32}\b", re.I)
 _REFUND_ID = re.compile(r"\bREF-[0-9A-Z]{3,32}\b", re.I)
 
 

@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     )
     MCSS_REFLECTION_MAX_REVISIONS: int = Field(default=1, ge=0, le=1)
     MCSS_REFLECTION_MAX_SUPPLEMENTAL_INVESTIGATIONS: int = Field(default=1, ge=0, le=1)
-    MCSS_REFLECTION_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0.0, le=10.0)
+    MCSS_REFLECTION_TIMEOUT_SECONDS: float = Field(default=15.0, gt=0.0, le=60.0)
 
     # CORS
     MCSS_CORS_ORIGINS: str = Field(

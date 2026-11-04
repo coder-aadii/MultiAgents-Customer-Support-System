@@ -27,9 +27,9 @@ class AgentBudgetExceededError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class AgentBudget:
-    max_execution_tokens: int = 2048
+    max_execution_tokens: int = 8192
     max_tool_calls: int = 3
-    max_timeout_seconds: float = 8.0
+    max_timeout_seconds: float = 15.0
 
     def __post_init__(self) -> None:
         if self.max_execution_tokens < 1:

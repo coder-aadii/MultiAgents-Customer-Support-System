@@ -95,11 +95,11 @@ class ReflectionResult(BaseModel):
     @model_validator(mode="after")
     def validate_verdict_contract(self) -> "ReflectionResult":
         expected_step = ReflectionNextStep(self.verdict.value if self.verdict != ReflectionVerdict.approve else "deliver")
-        if self.recommended_next_step is not expected_step:
+        if self.recommended_next_step != expected_step:
             raise ValueError("recommended_next_step must match the controlled verdict")
-        if self.verdict is ReflectionVerdict.approve and (not self.grounded or not self.complete):
+        if self.verdict == ReflectionVerdict.approve and (not self.grounded or not self.complete):
             raise ValueError("approval requires grounded and complete findings")
-        if self.verdict is ReflectionVerdict.approve and self.issues:
+        if self.verdict == ReflectionVerdict.approve and self.issues:
             raise ValueError("approval cannot include unresolved issues")
         return self
 
@@ -144,7 +144,7 @@ class ReflectionRiskPolicy:
         backend_high_risk: bool = False,
     ) -> ReflectionRiskDecision:
         normalized = customer_request.strip().lower().rstrip("!?.")
-        if normalized in cls._GREETING and findings_count == 0 and not backend_high_risk:
+        if (not normalized or (normalized in cls._GREETING and findings_count == 0)) and not backend_high_risk:
             return ReflectionRiskDecision(required=False)
 
         reasons: list[str] = []

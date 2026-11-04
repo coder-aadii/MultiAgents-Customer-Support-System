@@ -80,7 +80,11 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
             evidence_key = f"ref_{record.entity_type}_{record.entity_id}"
             facts.extend(record.extract_facts(evidence_key))
             evidence_keys.append(evidence_key)
-            recommendations.append(f"Retrieved {record.title}.")
+            status = record.summary_fields.get("status") if isinstance(record.summary_fields, dict) else None
+            if status:
+                recommendations.append(f"Order #{record.entity_id[:8]} is currently {status}.")
+            else:
+                recommendations.append(f"Retrieved {record.title}.")
         return SpecialistFindings(
             specialist=self.agent_name,
             status=SpecialistStatus.completed,
@@ -98,6 +102,8 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
         entity_type = str(data.get("entity_type", "order"))
         evidence_key = f"ref_{entity_type}_{entity_id}"
         summary = data.get("summary_fields", {})
+        status = summary.get("status") if isinstance(summary, dict) else None
+        title = f"Order #{entity_id[:8]} is currently {status}." if status else f"Retrieved {str(data.get('title', entity_id))}."
         facts = tuple(
             VerifiedFact(entity_type=entity_type, entity_id=entity_id, field_name=str(key),
                          field_value=value, source_evidence_id=evidence_key)
@@ -106,5 +112,5 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
         return SpecialistFindings(
             specialist=self.agent_name, status=SpecialistStatus.completed, facts=facts,
             evidence_keys=(evidence_key,), confidence=1.0,
-            recommendations=(f"Retrieved {str(data.get('title', entity_id))}.",),
+            recommendations=(title,),
         )

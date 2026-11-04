@@ -161,7 +161,9 @@ class MultiAgentSynthesisCoordinator:
                         started_at=started_at, result=critic_result,
                     )
                     await db.flush()
-            except (ReflectionAgentError, ValueError, RuntimeError):
+            except (ReflectionAgentError, ValueError, RuntimeError) as exc:
+                import logging
+                logging.getLogger(__name__).warning("Reflection execution failed: %s: %s", type(exc).__name__, exc, exc_info=True)
                 return await self._fail_closed(
                     context, active_evidence, "mandatory_reflection_failed", db
                 )
