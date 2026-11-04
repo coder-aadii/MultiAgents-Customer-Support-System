@@ -367,9 +367,12 @@ async def test_fatal_job_failure_triggers_safe_handoff(setup_test_conversation):
         await db.commit()
 
     # 3. Process job with pipeline raising a fatal exception
-    with patch(
-        "app.services.job_worker.handle_assistant_pipeline",
-        side_effect=RuntimeError("Unrecoverable downstream provider crash"),
+    with (
+        patch("app.services.job_worker.multi_agent_workflow_enabled", return_value=False),
+        patch(
+            "app.services.job_worker.handle_assistant_pipeline",
+            side_effect=RuntimeError("Unrecoverable downstream provider crash"),
+        ),
     ):
         success = await process_claimed_job(job_id=job_id, worker_id=worker_id)
         assert success is False
@@ -432,9 +435,12 @@ async def test_retryable_job_failure_requeues_for_retry(setup_test_conversation)
         await db.commit()
 
     # 3. Process job with temporary failure
-    with patch(
-        "app.services.job_worker.handle_assistant_pipeline",
-        side_effect=TimeoutError("Transient network timeout"),
+    with (
+        patch("app.services.job_worker.multi_agent_workflow_enabled", return_value=False),
+        patch(
+            "app.services.job_worker.handle_assistant_pipeline",
+            side_effect=TimeoutError("Transient network timeout"),
+        ),
     ):
         success = await process_claimed_job(job_id=job_id, worker_id=worker_id)
         assert success is False

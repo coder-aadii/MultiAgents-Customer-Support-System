@@ -14,6 +14,8 @@
     "saveContact": "Save",
     "savingContact": "Saving...",
     "contactSaved": "Details saved",
+    "fullscreen": "Fullscreen",
+    "exitFullscreen": "Exit Fullscreen",
     "closedNotice": "This conversation is closed.",
     "networkError": "Connection error. Reconnecting...",
     "openChat": "Open support chat",

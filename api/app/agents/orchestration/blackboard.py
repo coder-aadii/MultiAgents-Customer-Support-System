@@ -30,7 +30,7 @@ class DurableBlackboard:
     def record_task_result(self, task_id: str, result: dict[str, Any]) -> None:
         if task_id not in {task.task_id for task in self.plan.tasks}:
             raise ValueError(f"task '{task_id}' does not belong to this investigation plan")
-        safe_result = mask_pii(redact_sensitive_data(result))
+        safe_result = mask_pii(redact_sensitive_data(result), exclude_keys=frozenset({"recommendations", "facts"}))
         if not isinstance(safe_result, dict):
             raise ValueError("task result must serialize to an object")
         self.task_results[task_id] = safe_result

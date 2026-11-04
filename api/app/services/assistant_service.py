@@ -48,6 +48,10 @@ from app.services.triage_service import classify_message
 logger = logging.getLogger("mcss.assistant.service")
 
 HANDOFF_MESSAGE_TEXT = "I’m connecting you with our support team so they can help further."
+OUT_OF_SCOPE_MESSAGE_TEXT = (
+    "I can only help with questions regarding your orders, shipping, and store policies. "
+    "Could you tell me what order or policy you need help with?"
+)
 MIN_CONFIDENCE_THRESHOLD = 0.75
 MAX_HISTORY_MESSAGES = 6
 MAX_HISTORY_CHARS = 2500
@@ -1098,6 +1102,31 @@ async def handle_assistant_pipeline(
                 now=now,
             )
 
+        if triage.action == TriageAction.out_of_scope:
+            recheck = await db.execute(
+                select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+            )
+            active_conv = recheck.scalar_one_or_none()
+            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+                await db.commit()
+                return None
+
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
+
+            out_of_scope_msg = Message(
+                conversation_id=conversation_id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=OUT_OF_SCOPE_MESSAGE_TEXT,
+                metadata_json={"action": "out_of_scope", "reason": triage.reason},
+                created_at=msg_now,
+            )
+            db.add(out_of_scope_msg)
+            await db.commit()
+            return out_of_scope_msg
+
         # Step 3.5: Conversational Greetings (friendly response; avoid false staff handoff)
         clean_msg = re.sub(r"[^\w\s]", "", visitor_message_content.strip().lower()).strip()
         greetings = {
@@ -1140,6 +1169,38 @@ async def handle_assistant_pipeline(
             db.add(greeting_msg)
             await db.commit()
             return greeting_msg
+
+        # Step 3.6: Common Off-Topic / Unrelated Queries (friendly scope reminder; avoid false staff handoff)
+        off_topic_patterns = [
+            r"^(what('s| is) (the )?(date|time|weather|day))",
+            r"^what is the date today",
+            r"^tell me a joke",
+            r"^who is the president",
+            r"^how are you",
+        ]
+        if any(re.search(pat, clean_msg) for pat in off_topic_patterns):
+            recheck = await db.execute(
+                select(Conversation).where(Conversation.id == conversation_id).with_for_update()
+            )
+            active_conv = recheck.scalar_one_or_none()
+            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+                await db.commit()
+                return None
+
+            msg_now = datetime.now(UTC)
+            active_conv.last_message_at = msg_now
+            active_conv.updated_at = msg_now
+            scope_msg = Message(
+                conversation_id=conversation_id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=OUT_OF_SCOPE_MESSAGE_TEXT,
+                metadata_json={"action": "out_of_scope", "reason": "off_topic_pattern"},
+                created_at=msg_now,
+            )
+            db.add(scope_msg)
+            await db.commit()
+            return scope_msg
 
         # Step 4: Evidence Retrieval for 'answer' (Protected with error handling)
         retrieval_failed = False

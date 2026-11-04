@@ -33,7 +33,7 @@ class OlistECommerceConnector(MockBusinessConnector):
     """
 
     _NAME = "olist_ecommerce"
-    _SUPPORTED_TYPES = ["order", "shipment", "refund"]
+    _SUPPORTED_TYPES = ["order", "shipment", "refund", "customer"]
 
     def __init__(self, db_path: str | Path | None = None) -> None:
         super().__init__()
@@ -122,6 +122,19 @@ class OlistECommerceConnector(MockBusinessConnector):
                     "type": "object",
                     "properties": {
                         "entity_id": {"type": "string", "description": "Refund ID, e.g. REF-5001"}
+                    },
+                    "required": ["entity_id"],
+                },
+                requires_ial=2,
+            ),
+            CapabilityDefinition(
+                name="get_customer_profile",
+                description="Retrieve customer profile and account details for the verified customer",
+                entity_type="customer",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "string", "description": "Customer ID or email"}
                     },
                     "required": ["entity_id"],
                 },
@@ -291,12 +304,66 @@ class OlistECommerceConnector(MockBusinessConnector):
             finally:
                 conn.close()
 
+        # 4. Query real SQLite dataset for customers
+        if norm_type == "customer":
+            clean_id = entity_id.strip()
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT customer_id, customer_unique_id, email, city, state FROM customers WHERE customer_id = ? OR email = ? OR customer_unique_id = ? LIMIT 1",
+                    (clean_id, clean_id, clean_id),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise EntityNotFoundError(f"Entity 'customer:{entity_id}' not found")
+
+                cid = row["customer_id"]
+                c_email = row["email"]
+                unique_id = row["customer_unique_id"]
+                if customer_id not in (cid, c_email, unique_id):
+                    logger.warning(
+                        "BOLA access violation rejected for customer lookup",
+                        customer_id=customer_id,
+                        target_id=clean_id,
+                    )
+                    raise EntityNotFoundError(f"Entity 'customer:{entity_id}' not found")
+
+                return EntityRecord(
+                    entity_type="customer",
+                    entity_id=cid,
+                    customer_id=customer_id,
+                    title="Customer Profile",
+                    summary_fields={
+                        "customer_id": cid,
+                        "customer_unique_id": unique_id,
+                        "email": c_email,
+                        "city": row["city"],
+                        "state": row["state"],
+                        "status": "active",
+                    },
+                    raw_payload={
+                        "customer_id": cid,
+                        "customer_unique_id": unique_id,
+                        "email": c_email,
+                        "city": row["city"],
+                        "state": row["state"],
+                    },
+                )
+            finally:
+                conn.close()
+
         raise EntityNotFoundError(f"Entity '{entity_type}:{entity_id}' not found")
 
     async def list_customer_entities(
         self, entity_type: str, customer_id: str
     ) -> list[EntityRecord]:
         norm_type = entity_type.strip().lower()
+
+        # 1. Check if customer entity requested
+        if norm_type == "customer":
+            rec = await self.get_entity_summary("customer", customer_id, customer_id)
+            return [rec]
 
         # 1. Check if mock customer
         if customer_id.startswith(("cust_verified_", "cust_other_")):

@@ -31,8 +31,12 @@ export function getWidgetStyles(accentColor: string = "#2563eb", position: strin
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      transition: transform 0.2s ease, box-shadow 0.2s ease, bottom 0.2s ease;
       outline: none;
+    }
+
+    .mcss-launcher-btn.mcss-launcher-fullscreen {
+      bottom: 84px;
     }
 
     .mcss-launcher-btn:hover {
@@ -61,6 +65,21 @@ export function getWidgetStyles(accentColor: string = "#2563eb", position: strin
       flex-direction: column;
       overflow: hidden;
       animation: mcss-fade-in 0.2s ease-out;
+      transition: width 0.2s ease, height 0.2s ease, bottom 0.2s ease, border-radius 0.2s ease;
+    }
+
+    .mcss-panel.mcss-panel-fullscreen {
+      top: 0;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      width: 100vw;
+      height: 100vh;
+      max-height: 100vh;
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+      z-index: 999999;
     }
 
     @keyframes mcss-fade-in {
@@ -96,6 +115,35 @@ export function getWidgetStyles(accentColor: string = "#2563eb", position: strin
       margin: 0;
       font-size: 16px;
       font-weight: 600;
+    }
+
+    .mcss-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .mcss-fullscreen-btn {
+      background: transparent;
+      border: none;
+      color: #ffffff;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.85;
+      outline: none;
+    }
+
+    .mcss-fullscreen-btn:hover {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .mcss-fullscreen-btn:focus-visible {
+      outline: 2px solid #ffffff;
     }
 
     .mcss-close-btn {

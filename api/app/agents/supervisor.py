@@ -17,6 +17,33 @@ from app.providers import LLMMessage, LLMProvider, LLMRequest, get_llm_provider
 MAX_USER_MESSAGE_CHARS = 2_000
 MAX_REPLAN_ITERATIONS = 2
 _GREETING = re.compile(r"^(?:hi|hello|hey|good (?:morning|afternoon|evening)|thanks?|thank you)[!?.\s]*$", re.I)
+_IDENTITY_PATTERN = re.compile(
+    r"\b("
+    r"who\s*am\s*i|whoami|"
+    r"my\s+(?:e-?mail|eamil|account|profile|info|information|details|name|username|id|login)|"
+    r"what(?:'s|\s+is)\s+my\s+(?:e-?mail|eamil|account|profile|info|information|details|name|username|id|login)|"
+    r"(?:tell|show)\s+(?:me\s+)?my\s+(?:e-?mail|eamil|account|profile|info|details|name)|"
+    r"logged\s+in\s+as|customer\s*id"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_identity_query(text: str) -> bool:
+    if not text:
+        return False
+    return bool(_IDENTITY_PATTERN.search(text))
+
+
+# Intent conjunctions mark a multi-intent message that must run through the slow
+# multi-intent planner rather than collapsing to a single fast-path specialist.
+_MULTI_INTENT_PATTERN = re.compile(r"\b(?:and|or|but|also|plus)\b", re.IGNORECASE)
+
+
+def is_multi_intent_query(text: str) -> bool:
+    if not text:
+        return False
+    return bool(_MULTI_INTENT_PATTERN.search(text))
 
 
 class SupervisorAgent(BaseAgent):
@@ -164,56 +191,109 @@ class SupervisorAgent(BaseAgent):
 
         normalized = message.lower()
 
-        # Check for how-to / process / policy inquiries
-        is_how_to = any(
+        # Check for customer account / identity / profile inquiries
+        if is_identity_query(normalized):
+            return "business_data_specialist"
+
+        # A conjunction between two intents is a multi-intent message: let the slow
+        # planner build a DAG instead of collapsing to one fast-path specialist.
+        if is_multi_intent_query(normalized):
+            return None
+
+        # Check for how-to / process inquiries. These are answered from the
+        # knowledge base, never from a customer's live records, so they take priority
+        # over personal record lookups when both match (e.g. "how can I check when my
+        # order was approved" or "how to cancel my order" is process guidance, not a direct data request).
+        is_process_how_to = any(
             phrase in normalized
             for phrase in (
                 "how can i",
                 "how do i",
                 "how to",
                 "how does",
-                "what does",
-                "what is",
-                "meaning of",
-                "explain",
-                "faq",
-                "policy",
+                "how am",
                 "procedure",
-                "guidance",
             )
         )
 
-        # Check for customer-specific record lookups (asking for own records or specific entity)
+        # Check for customer-specific record lookups (asking for own records or a
+        # specific entity). Generic phrasing ("status of order", "when was order") is
+        # intentionally excluded: those are definition questions, not data requests.
         is_record_lookup = any(
             phrase in normalized
             for phrase in (
                 "show my",
                 "list my",
                 "when was my",
-                "when was order",
-                "status of order",
                 "status of my",
+                "what is my",
+                "what was my",
+                "what are my",
+                "my order",
                 "my recent",
                 "recent orders",
+                "last order",
                 "is my order",
                 "where is my",
                 "track my",
             )
         ) or bool(re.search(r"\b(?:ord-|order\s+[0-9a-f]{6,})\b", normalized))
 
+        # Check for policy, status definition, and FAQ questions.
+        is_policy_inquiry = any(
+            phrase in normalized
+            for phrase in (
+                "policy",
+                "return",
+                "warranty",
+                "hours",
+                "faq",
+                "meaning of",
+                "explain",
+                "guidance",
+                "what does",
+                "what are",
+                "what can",
+                "can i cancel",
+                "what status",
+                "what statuses",
+                "order status",
+                "status mean",
+                "means",
+                "definition",
+                "definitions",
+                "cancel order policy",
+                "cancellation policy",
+            )
+        ) or (
+            any(phrase in normalized for phrase in ("what is", "tell me about"))
+            and not is_record_lookup
+        )
+
         domains = set()
 
-        if any(term in normalized for term in ("order", "customer", "purchase")):
-            if not (is_how_to and not is_record_lookup):
-                domains.add("business_data_specialist")
+        # Personal record lookups route to the business-data specialist only when the
+        # message is a direct order/account data request (not a shipment tracking or billing request).
+        # A process how-to framing or policy inquiry always wins (e.g. "how to cancel my order" or
+        # "what is my order status" guides policy/definitions rather than performing a raw data dump).
+        is_logistics = any(term in normalized for term in ("tracking", "shipment", "carrier", "delivery", "delayed"))
+        is_billing = any(term in normalized for term in ("refund", "invoice", "billing", "payment", "charge"))
 
-        if any(term in normalized for term in ("tracking", "shipment", "carrier", "delivery", "delayed")):
+        if (
+            is_record_lookup
+            and not is_process_how_to
+            and not is_policy_inquiry
+            and not (is_logistics or is_billing)
+        ):
+            domains.add("business_data_specialist")
+
+        if is_logistics:
             domains.add("logistics_specialist")
 
-        if any(term in normalized for term in ("refund", "invoice", "billing", "payment", "charge")):
+        if is_billing:
             domains.add("billing_specialist")
 
-        if is_how_to or any(term in normalized for term in ("policy", "return", "warranty", "hours", "faq")):
+        if is_process_how_to or is_policy_inquiry:
             domains.add("knowledge_specialist")
 
         return next(iter(domains)) if len(domains) == 1 else None

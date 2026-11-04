@@ -15,6 +15,7 @@ class TriageAction(str, enum.Enum):
     business_data = "business_data"
     clarify = "clarify"
     handoff = "handoff"
+    out_of_scope = "out_of_scope"
 
 
 class TriageReason(str, enum.Enum):
@@ -26,6 +27,7 @@ class TriageReason(str, enum.Enum):
     missing_detail = "missing_detail"
     faq_match = "faq_match"
     irrelevant = "irrelevant"
+    out_of_scope = "out_of_scope"
     unclear = "unclear"
     unknown = "unknown"
     schema_error = "schema_error"

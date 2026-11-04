@@ -70,18 +70,21 @@ def redact_sensitive_data(val: Any) -> Any:
     return val
 
 
-def mask_pii(val: Any) -> Any:
+def mask_pii(val: Any, exclude_keys: frozenset[str] = frozenset()) -> Any:
     """Recursively mask common PII before data is persisted to operational logs.
 
     This is deliberately applied in addition to key-based redaction because agent
     payloads can contain customer text under otherwise innocuous field names.
     """
     if isinstance(val, dict):
-        return {str(key): mask_pii(value) for key, value in val.items()}
+        return {
+            str(key): value if str(key) in exclude_keys else mask_pii(value, exclude_keys)
+            for key, value in val.items()
+        }
     if isinstance(val, list):
-        return [mask_pii(item) for item in val]
+        return [mask_pii(item, exclude_keys) for item in val]
     if isinstance(val, tuple):
-        return tuple(mask_pii(item) for item in val)
+        return tuple(mask_pii(item, exclude_keys) for item in val)
     if isinstance(val, str):
         value = _EMAIL_PATTERN.sub("[REDACTED_EMAIL]", val)
         return _PHONE_PATTERN.sub("[REDACTED_PHONE]", value)

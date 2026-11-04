@@ -135,6 +135,7 @@ async def classify_message(
             TriageAction.clarify.value,
             TriageAction.handoff.value,
             TriageAction.business_data.value,
+            TriageAction.out_of_scope.value,
         }
 
         if action_str not in valid_actions:

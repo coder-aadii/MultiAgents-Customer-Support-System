@@ -211,6 +211,65 @@ async def test_supervisor_fast_path_process_vs_business_data() -> None:
 
 
 @pytest.mark.asyncio
+async def test_supervisor_fast_path_knowledge_vs_business_data() -> None:
+    """Refined intent routing: definition/policy questions must reach the knowledge
+    specialist, never the business-data specialist, and never fall through to the
+    slow multi-intent planner."""
+    provider = FakeLLMProvider()
+    supervisor = SupervisorAgent(provider, registry(all_specialists=True), enabled=True)
+
+    cases = {
+        "what is order status": "knowledge_specialist",
+        "what statuses can order have": "knowledge_specialist",
+        "what is my order status": "knowledge_specialist",
+        "return policy": "knowledge_specialist",
+        "what is the shipping policy": "knowledge_specialist",
+        "how do i return an item": "knowledge_specialist",
+        "can i cancel my order": "knowledge_specialist",
+        "what does approved mean": "knowledge_specialist",
+    }
+    for message, expected in cases.items():
+        decision = await supervisor.analyze_and_plan(context(message))
+        assert decision.outcome is PlanningOutcome.fast_path, message
+        assert decision.target_agent == expected, message
+
+    # Personal record lookups still route to the business-data specialist.
+    for message in ("Show my recent orders", "Where is my order", "Track my order"):
+        decision = await supervisor.analyze_and_plan(context(message))
+        assert decision.outcome is PlanningOutcome.fast_path, message
+        assert decision.target_agent == "business_data_specialist", message
+
+    # Mixed intent must not fast-path; it runs the multi-intent planner.
+    provider.queue_response(
+        {
+            "user_intents": ["check order approval status", "explain approved definition"],
+            "tasks": [
+                {
+                    "task_id": "lookup_order",
+                    "assigned_agent": "business_data_specialist",
+                    "task_description": "lookup customer order approval status",
+                    "required_inputs": {},
+                    "dependencies": [],
+                },
+                {
+                    "task_id": "explain_approved",
+                    "assigned_agent": "knowledge_specialist",
+                    "task_description": "explain what approved means",
+                    "required_inputs": {},
+                    "dependencies": [],
+                },
+            ],
+        }
+    )
+    decision = await supervisor.analyze_and_plan(
+        context("Is my order approved, and what does approved mean?")
+    )
+    assert decision.outcome is PlanningOutcome.plan
+    assert len(decision.plan.tasks) == 2
+    assert provider.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_supervisor_mixed_intent_plans_dag() -> None:
     provider = FakeLLMProvider()
     # Provide canned response for multi-intent planner

@@ -18,7 +18,7 @@ class MockBusinessConnector(BaseConnector):
     """
 
     _NAME = "mock_business"
-    _SUPPORTED_TYPES = ["order", "shipment", "refund"]
+    _SUPPORTED_TYPES = ["order", "shipment", "refund", "customer"]
 
     def __init__(self, custom_records: list[dict[str, Any]] | None = None) -> None:
         self._records_by_key: dict[str, dict[str, Any]] = {}
@@ -152,6 +152,25 @@ class MockBusinessConnector(BaseConnector):
                     "method": "original_payment_method",
                 },
             },
+            {
+                "entity_type": "customer",
+                "entity_id": "cust_verified_123",
+                "customer_id": "cust_verified_123",
+                "title": "Customer Profile",
+                "summary_fields": {
+                    "customer_id": "cust_verified_123",
+                    "email": "verified@example.com",
+                    "city": "Springfield",
+                    "state": "IL",
+                    "status": "active",
+                },
+                "raw_payload": {
+                    "customer_id": "cust_verified_123",
+                    "email": "verified@example.com",
+                    "city": "Springfield",
+                    "state": "IL",
+                },
+            },
             # Isolated other customer fixtures (for BOLA and cross-customer isolation tests)
             {
                 "entity_type": "order",
@@ -169,6 +188,25 @@ class MockBusinessConnector(BaseConnector):
                 "raw_payload": {
                     "order_id": "ORD-2001",
                     "customer_id": "cust_other_456",
+                },
+            },
+            {
+                "entity_type": "customer",
+                "entity_id": "cust_other_456",
+                "customer_id": "cust_other_456",
+                "title": "Customer Profile",
+                "summary_fields": {
+                    "customer_id": "cust_other_456",
+                    "email": "other@example.com",
+                    "city": "Metropolis",
+                    "state": "NY",
+                    "status": "active",
+                },
+                "raw_payload": {
+                    "customer_id": "cust_other_456",
+                    "email": "other@example.com",
+                    "city": "Metropolis",
+                    "state": "NY",
                 },
             },
         ]
@@ -225,6 +263,19 @@ class MockBusinessConnector(BaseConnector):
                 },
                 requires_ial=2,
             ),
+            CapabilityDefinition(
+                name="get_customer_profile",
+                description="Retrieve customer profile and account details for the verified customer",
+                entity_type="customer",
+                parameters_schema={
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "string", "description": "Customer ID or email"}
+                    },
+                    "required": ["entity_id"],
+                },
+                requires_ial=2,
+            ),
         ]
 
     async def get_entity_summary(
@@ -232,10 +283,15 @@ class MockBusinessConnector(BaseConnector):
     ) -> EntityRecord:
         key = self._build_key(entity_type, entity_id)
         record = self._records_by_key.get(key)
+        if not record:
+            for r in self._records_by_key.values():
+                if r["entity_type"].lower() == entity_type.strip().lower() and r["entity_id"].lower() == entity_id.strip().lower():
+                    record = r
+                    break
 
         # Invariant: If entity does not exist OR belongs to another customer, raise EntityNotFoundError.
         # This completely prevents customer ID and order ID enumeration (BOLA/IDOR).
-        if not record or record["customer_id"] != customer_id:
+        if not record or record["customer_id"].lower() != customer_id.strip().lower():
             raise EntityNotFoundError(
                 f"Entity '{entity_type}:{entity_id}' not found"
             )

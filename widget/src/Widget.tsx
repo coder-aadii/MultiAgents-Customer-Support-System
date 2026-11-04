@@ -15,6 +15,7 @@ export interface WidgetConfig {
 
 export default function Widget({ config }: { config: WidgetConfig }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const [messages, setMessages] = useState<WidgetMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -250,8 +251,13 @@ export default function Widget({ config }: { config: WidgetConfig }) {
       {/* Floating launcher */}
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="mcss-launcher-btn"
+        onClick={() => {
+          if (isOpen && isFullScreen) {
+            setIsFullScreen(false);
+          }
+          setIsOpen(!isOpen);
+        }}
+        className={`mcss-launcher-btn${isOpen && isFullScreen ? " mcss-launcher-fullscreen" : ""}`}
         aria-expanded={isOpen}
         aria-label={isOpen ? t("widget.closeChat") : t("widget.openChat")}
       >
@@ -277,21 +283,43 @@ export default function Widget({ config }: { config: WidgetConfig }) {
           ref={panelRef}
           role="dialog"
           aria-label={title}
-          className="mcss-panel"
+          className={`mcss-panel${isFullScreen ? " mcss-panel-fullscreen" : ""}`}
         >
           {/* Header */}
           <header className="mcss-header">
             <h2>{title}</h2>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="mcss-close-btn"
-              aria-label={t("widget.close")}
-            >
-              <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="mcss-header-actions">
+              <button
+                type="button"
+                onClick={() => setIsFullScreen(!isFullScreen)}
+                className="mcss-fullscreen-btn"
+                aria-label={isFullScreen ? t("widget.exitFullscreen") : t("widget.fullscreen")}
+                title={isFullScreen ? t("widget.exitFullscreen") : t("widget.fullscreen")}
+              >
+                {isFullScreen ? (
+                  <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 9L4 4m0 0v5m0-5h5m6 0h5m0 0v5m0-5l-5 5M9 15l-5 5m0 0v-5m0 5h5m6 0h5m0 0v-5m0 5l-5-5" />
+                  </svg>
+                ) : (
+                  <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5h-4m4 0v-4m0 4l-5-5" />
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFullScreen(false);
+                  setIsOpen(false);
+                }}
+                className="mcss-close-btn"
+                aria-label={t("widget.close")}
+              >
+                <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </header>
 
           {/* Optional contact details bar */}

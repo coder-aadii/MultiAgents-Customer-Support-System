@@ -176,6 +176,8 @@ class FakeLLMProvider(LLMProvider):
             return json.dumps({"action": "handoff", "reason": "unsafe_domain"})
         if any(w in text_lower for w in ["world cup", "python script", "simulate", "soccer", "orbit", "weather", "recipe"]):
             return json.dumps({"action": "handoff", "reason": "unsupported_request"})
+        if any(w in text_lower for w in ["what is the date", "date today", "what is the time", "tell me a joke", "who is the president"]):
+            return json.dumps({"action": "out_of_scope", "reason": "out_of_scope"})
 
         # Generic how-to / process questions, FAQ, definitions -> answer
         is_process_query = any(
@@ -203,7 +205,8 @@ class FakeLLMProvider(LLMProvider):
                 "recent orders",
                 "when was my order",
                 "when was order",
-                "status of order",
+                "status of my order",
+                "status of my",
                 "is my order",
                 "track my",
             ]

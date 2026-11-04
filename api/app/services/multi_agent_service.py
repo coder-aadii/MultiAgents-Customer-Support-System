@@ -23,7 +23,7 @@ from app.agents.orchestration.executor import MultiAgentWorkflowExecutor, Workfl
 from app.agents.orchestration.synthesizer import MultiAgentSynthesisCoordinator, ResolutionStatus
 from app.agents.planner import InvestigationPlan, PlanningDecision, PlanningOutcome, TaskNode
 from app.agents.specialists.schemas import SpecialistFindings
-from app.agents.supervisor import SupervisorAgent
+from app.agents.supervisor import SupervisorAgent, is_identity_query
 from app.config import settings
 from app.database import async_session_factory
 from app.models.conversation import Conversation, ConversationStatus
@@ -31,7 +31,11 @@ from app.models.handoff import HandoffReason
 from app.models.message import Message, SenderType
 from app.models.visitor_session import VisitorSession
 from app.models.workflow_checkpoint import WorkflowCheckpoint
-from app.services.assistant_service import HANDOFF_MESSAGE_TEXT, create_or_reuse_handoff
+from app.services.assistant_service import (
+    HANDOFF_MESSAGE_TEXT,
+    OUT_OF_SCOPE_MESSAGE_TEXT,
+    create_or_reuse_handoff,
+)
 
 
 async def handle_multi_agent_pipeline(
@@ -46,6 +50,64 @@ async def handle_multi_agent_pipeline(
     conversation = await db.scalar(select(Conversation).where(Conversation.id == conversation_id))
     if conversation is None or conversation.status in (ConversationStatus.staff_active, ConversationStatus.closed):
         return None
+
+    clean_msg = re.sub(r"[^\w\s]", "", visitor_message_content.strip().lower()).strip()
+    greetings = {
+        "hi", "hello", "hey", "hey there", "hi there", "hello there",
+        "good morning", "good afternoon", "good evening", "howdy", "greetings", "yo",
+    }
+    if clean_msg in greetings:
+        active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+        if active is None or active.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            await db.commit()
+            return None
+        now_msg = datetime.now(UTC)
+        active.last_message_at = now_msg
+        active.updated_at = now_msg
+        greeting_msg = Message(
+            organization_id=active.organization_id,
+            conversation_id=active.id,
+            client_message_id=uuid.uuid4(),
+            sender_type=SenderType.assistant,
+            content=(
+                "Hello! How can I help you today? You can ask about our return and refund policies, "
+                "track a shipment, or look up your orders."
+            ),
+            metadata_json={"action": "answer", "reason": "greeting", "sources": []},
+            created_at=now_msg,
+        )
+        db.add(greeting_msg)
+        await db.commit()
+        return greeting_msg
+
+    off_topic_patterns = [
+        r"^(what('s| is) (the )?(date|time|weather|day))",
+        r"what is the date",
+        r"weather today",
+        r"^tell me a joke",
+        r"^who is the president",
+        r"^how are you",
+    ]
+    if any(re.search(pat, clean_msg) for pat in off_topic_patterns):
+        active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+        if active is None or active.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            await db.commit()
+            return None
+        now_msg = datetime.now(UTC)
+        active.last_message_at = now_msg
+        active.updated_at = now_msg
+        out_msg = Message(
+            organization_id=active.organization_id,
+            conversation_id=active.id,
+            client_message_id=uuid.uuid4(),
+            sender_type=SenderType.assistant,
+            content=OUT_OF_SCOPE_MESSAGE_TEXT,
+            metadata_json={"action": "out_of_scope", "reason": "off_topic_pattern"},
+            created_at=now_msg,
+        )
+        db.add(out_msg)
+        await db.commit()
+        return out_msg
     session = await db.scalar(
         select(VisitorSession)
         .where(
@@ -162,10 +224,15 @@ def _resolve_task_inputs(plan: InvestigationPlan, message: str) -> Investigation
         inputs = dict(task.required_inputs)
         inputs.setdefault("query", message)
         if task.assigned_agent == "business_data_specialist":
-            inputs.setdefault("entity_type", "order")
-            order_id = match(_ORDER_ID)
-            if order_id:
-                inputs["entity_id"] = order_id
+            norm_desc = (task.task_description or "").lower()
+            norm_msg = message.lower()
+            if is_identity_query(norm_msg) or is_identity_query(norm_desc):
+                inputs["entity_type"] = "customer"
+            else:
+                inputs.setdefault("entity_type", "order")
+                order_id = match(_ORDER_ID)
+                if order_id:
+                    inputs["entity_id"] = order_id
         elif task.assigned_agent == "logistics_specialist":
             shipment_id = match(_SHIPMENT_ID)
             if shipment_id is None:

@@ -54,6 +54,18 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
                     db=context.db,
                 )
             ]
+        elif entity_type == "customer":
+            cid = context.visitor_session.verified_customer_id
+            if not cid:
+                return self.unauthenticated(self.agent_name)
+            records = [
+                await self._tool_gateway.execute_get_entity(
+                    session=context.visitor_session,
+                    entity_type="customer",
+                    entity_id=cid,
+                    db=context.db,
+                )
+            ]
         elif entity_type == "order":
             records = await self._tool_gateway.execute_list_entities(
                 session=context.visitor_session,
@@ -80,11 +92,24 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
             evidence_key = f"ref_{record.entity_type}_{record.entity_id}"
             facts.extend(record.extract_facts(evidence_key))
             evidence_keys.append(evidence_key)
-            status = record.summary_fields.get("status") if isinstance(record.summary_fields, dict) else None
-            if status:
-                recommendations.append(f"Order #{record.entity_id[:8]} is currently {status}.")
+            if record.entity_type == "customer":
+                email = record.summary_fields.get("email") if isinstance(record.summary_fields, dict) else None
+                city = record.summary_fields.get("city") if isinstance(record.summary_fields, dict) else None
+                state = record.summary_fields.get("state") if isinstance(record.summary_fields, dict) else None
+                loc_str = f" in {city.title()}, {state.upper()}" if city and state else ""
+                cid = record.customer_id or record.entity_id
+                if email:
+                    recommendations.append(
+                        f"You are currently logged in with email {email}{loc_str} (Customer ID: {cid})."
+                    )
+                else:
+                    recommendations.append(f"You are logged in with Customer ID: {cid}.")
             else:
-                recommendations.append(f"Retrieved {record.title}.")
+                status = record.summary_fields.get("status") if isinstance(record.summary_fields, dict) else None
+                if status:
+                    recommendations.append(f"Order #{record.entity_id[:8]} is currently {status}.")
+                else:
+                    recommendations.append(f"Retrieved {record.title}.")
         return SpecialistFindings(
             specialist=self.agent_name,
             status=SpecialistStatus.completed,

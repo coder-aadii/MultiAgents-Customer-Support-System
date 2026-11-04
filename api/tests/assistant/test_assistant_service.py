@@ -27,6 +27,7 @@ from app.schemas.retrieval import RetrievalResultItem
 from app.security.password import hash_password
 from app.services.assistant_service import (
     HANDOFF_MESSAGE_TEXT,
+    OUT_OF_SCOPE_MESSAGE_TEXT,
     generate_grounded_answer,
     handle_assistant_pipeline,
 )
@@ -419,6 +420,37 @@ async def test_full_pipeline_handoff_human_request(setup_assistant_env):
         assert handoff is not None
         assert handoff.status == HandoffStatus.queued
         assert handoff.reason == HandoffReason.visitor_requested
+
+
+@pytest.mark.asyncio
+async def test_full_pipeline_out_of_scope_message(setup_assistant_env):
+    """Off-topic question returns domain boundary message and keeps conversation open without staff handoff."""
+    conv_id = setup_assistant_env["conversation_id"]
+    fake_provider = FakeLLMProvider()
+
+    async with async_session_factory() as session:
+        msg = await handle_assistant_pipeline(
+            db=session,
+            conversation_id=conv_id,
+            visitor_message_content="what is the date today?",
+            llm_provider=fake_provider,
+        )
+
+        assert msg is not None
+        assert msg.sender_type == SenderType.assistant
+        assert msg.content == OUT_OF_SCOPE_MESSAGE_TEXT
+        assert msg.metadata_json["action"] == "out_of_scope"
+
+        # Conversation remains open, NOT waiting_for_staff
+        conv = await session.get(Conversation, conv_id)
+        assert conv.status == ConversationStatus.open
+
+        # No handoff created
+        handoff_res = await session.execute(
+            select(Handoff).where(Handoff.conversation_id == conv_id)
+        )
+        handoff = handoff_res.scalar_one_or_none()
+        assert handoff is None
 
 
 @pytest.mark.asyncio

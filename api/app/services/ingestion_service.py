@@ -203,3 +203,4 @@ async def process_document_ingestion(
             )
         )
         await db.commit()
+        raise

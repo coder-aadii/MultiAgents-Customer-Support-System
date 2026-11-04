@@ -404,3 +404,23 @@ async def test_triage_business_data_unverified_prompt_to_authenticate(setup_conv
         assert res2.reason == "authentication_required"
         await session.commit()
 
+
+@pytest.mark.asyncio
+async def test_triage_action_out_of_scope(setup_conversation):
+    """Ensure off-topic/unrelated questions classify as 'out_of_scope'."""
+    conv_id = setup_conversation["conversation_id"]
+    fake_provider = FakeLLMProvider()
+
+    async with async_session_factory() as session:
+        result = await classify_message(
+            db=session,
+            conversation_id=conv_id,
+            current_message="what is the date today?",
+            llm_provider=fake_provider,
+        )
+        await session.commit()
+
+        assert result is not None
+        assert result.action == TriageAction.out_of_scope
+        assert result.reason == "out_of_scope"
+
