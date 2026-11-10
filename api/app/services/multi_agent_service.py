@@ -117,6 +117,35 @@ async def handle_multi_agent_pipeline(
         db.add(out_msg)
         await db.commit()
         return out_msg
+
+    cross_user_patterns = [
+        r"\b(?:other|another|someone else'?s|somebody else'?s|customer\s+[\w.-]+|user\s+[\w.-]+)\b.*?\b(?:order|account|data|tracking|details|profile|history)\b",
+        r"\b(?:order|account|data|tracking|details)\b.*?\b(?:for|of)\s+(?:another|other|someone else|customer\s+[\w.-]+|user\s+[\w.-]+)\b",
+    ]
+    if any(re.search(pat, visitor_message_content.lower()) for pat in cross_user_patterns):
+        active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+        if active is None or active.status != ConversationStatus.open:
+            await db.commit()
+            return None
+        now_msg = datetime.now(UTC)
+        active.last_message_at = now_msg
+        active.updated_at = now_msg
+        privacy_msg = Message(
+            organization_id=active.organization_id,
+            conversation_id=active.id,
+            client_message_id=uuid.uuid4(),
+            sender_type=SenderType.assistant,
+            content=(
+                "For security and privacy reasons, I can only provide information for orders and accounts directly "
+                "associated with your verified login. If you need assistance with a different account or order, please "
+                "have the account holder contact us directly, or let me know if you would like to speak with a human support agent."
+            ),
+            metadata_json={"action": "answer", "reason": "privacy_fence", "sources": []},
+            created_at=now_msg,
+        )
+        db.add(privacy_msg)
+        await db.commit()
+        return privacy_msg
     session = await db.scalar(
         select(VisitorSession)
         .where(
@@ -128,6 +157,56 @@ async def handle_multi_agent_pipeline(
         .order_by(desc(VisitorSession.created_at))
         .limit(1)
     )
+
+    is_authenticated = bool(session and session.is_customer_authenticated and session.verified_customer_id)
+    if not is_authenticated:
+        norm_msg = visitor_message_content.lower()
+        is_personal_query = (
+            any(
+                phrase in norm_msg
+                for phrase in (
+                    "my order",
+                    "my recent",
+                    "recent orders",
+                    "last order",
+                    "is my order",
+                    "where is my",
+                    "track my",
+                    "list my",
+                    "show my",
+                    "my account",
+                    "my profile",
+                    "my details",
+                    "my refund",
+                    "my shipment",
+                )
+            )
+            or is_identity_query(norm_msg)
+        )
+        if is_personal_query:
+            active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
+            if active is None or active.status != ConversationStatus.open:
+                await db.commit()
+                return None
+            now_msg = datetime.now(UTC)
+            active.last_message_at = now_msg
+            active.updated_at = now_msg
+            auth_msg = Message(
+                organization_id=active.organization_id,
+                conversation_id=active.id,
+                client_message_id=uuid.uuid4(),
+                sender_type=SenderType.assistant,
+                content=(
+                    "To view, track, or manage your orders and account details, please log in to your account first. "
+                    "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely view your orders. "
+                    "If you have general questions about our return policy or shipping procedures, feel free to ask!"
+                ),
+                metadata_json={"action": "clarify", "reason": "authentication_required", "sources": []},
+                created_at=now_msg,
+            )
+            db.add(auth_msg)
+            await db.commit()
+            return auth_msg
     context = AgentContext(
         tenant_id=conversation.organization_id,
         conversation_id=conversation_id,
@@ -217,7 +296,7 @@ def _fast_path_plan(target_agent: str | None, user_message: str) -> Investigatio
     )
 
 
-_ORDER_ID = re.compile(r"\b(?:ORD-[0-9A-Z]{3,32}|[0-9a-f]{8,32})\b", re.I)
+_ORDER_ID = re.compile(r"\b(?:ORD-[0-9A-Za-z]{3,32}|[0-9a-fA-F]{32}|#[0-9A-Za-z]{2,32}|\d{3,16})\b", re.I)
 _SHIPMENT_ID = re.compile(r"\b(?:TRK|SHP|BR)-[0-9A-Z]{3,32}\b", re.I)
 _REFUND_ID = re.compile(r"\bREF-[0-9A-Z]{3,32}\b", re.I)
 
@@ -241,12 +320,23 @@ def _resolve_task_inputs(plan: InvestigationPlan, message: str) -> Investigation
                 inputs.setdefault("entity_type", "order")
                 order_id = match(_ORDER_ID)
                 if order_id:
-                    inputs["entity_id"] = order_id
+                    inputs["entity_id"] = order_id.lstrip("#")
         elif task.assigned_agent == "logistics_specialist":
             shipment_id = match(_SHIPMENT_ID)
-            if shipment_id is None:
+            if shipment_id is not None:
+                inputs["entity_id"] = shipment_id
+            elif "order" in message.lower() or match(_ORDER_ID):
+                # Fall back to business_data_specialist if order query lacked carrier tracking code
+                task = task.model_copy(update={
+                    "assigned_agent": "business_data_specialist",
+                    "task_description": "Investigate order and shipment status using authorized read-only data.",
+                })
+                inputs["entity_type"] = "order"
+                order_id = match(_ORDER_ID)
+                if order_id:
+                    inputs["entity_id"] = order_id.lstrip("#")
+            else:
                 return None
-            inputs["entity_id"] = shipment_id
         elif task.assigned_agent == "billing_specialist":
             refund_id = match(_REFUND_ID)
             if refund_id is None:

@@ -38,9 +38,12 @@ class SpecialistAgent(BaseAgent):
     def unauthenticated(agent_name: str) -> SpecialistFindings:
         return SpecialistFindings(
             specialist=agent_name,
-            status=SpecialistStatus.authentication_required,
-            recommendations=("Please verify your account before we access account-specific information.",),
-            failure_reason="IAL_2_REQUIRED",
+            status=SpecialistStatus.completed,
+            confidence=1.0,
+            recommendations=(
+                "To view or track your personal orders and account details, please log in to your account first. You can sign in using the login options on this page.",
+            ),
+            evidence_keys=("ref_auth_required_notice",),
         )
 
     @staticmethod

@@ -4,6 +4,7 @@ import { reconcileMessages, PollingController } from "./utils/reconciliation";
 import { toSafeErrorMessage } from "./utils/errors";
 import { t } from "./utils/i18n";
 import { generateUUID } from "./utils/uuid";
+import { FormattedMessage } from "./components/FormattedMessage";
 
 export interface WidgetConfig {
   apiBaseUrl: string;
@@ -220,29 +221,6 @@ export default function Widget({ config }: { config: WidgetConfig }) {
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // 5. Plain text linkification helper (safe text nodes)
-  // ---------------------------------------------------------------------------
-  const renderMessageContent = (content: string) => {
-    const urlRegex = /(https:\/\/[^\s]+)/g;
-    const parts = content.split(urlRegex);
-
-    return parts.map((part, index) => {
-      if (part.match(urlRegex)) {
-        return (
-          <a
-            key={index}
-            href={part}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {part}
-          </a>
-        );
-      }
-      return <React.Fragment key={index}>{part}</React.Fragment>;
-    });
-  };
 
   const isClosed = conversation?.status === "closed";
 
@@ -385,7 +363,7 @@ export default function Widget({ config }: { config: WidgetConfig }) {
                 )}
 
                 <div className="mcss-bubble">
-                  {renderMessageContent(msg.content)}
+                  <FormattedMessage content={msg.content} />
                 </div>
 
                 {/* Source chips if any */}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.agents.base import AgentContext
-from app.agents.tools import DynamicToolInvoker
+from app.agents.tools import DynamicToolInvoker, DynamicToolValidationError, SecurityViolationError
 from app.agents.tools.schemas import DynamicToolCall
 from app.agents.specialists.base import SpecialistAgent
 from app.agents.specialists.schemas import SpecialistFindings, SpecialistStatus
@@ -80,7 +80,7 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
                     status=SpecialistStatus.failed,
                     failure_reason="CUSTOMER_ENTITY_ID_REQUIRED",
                 )
-        except EntityNotFoundError:
+        except (EntityNotFoundError, DynamicToolValidationError, SecurityViolationError):
             return SpecialistFindings(
                 specialist=self.agent_name,
                 status=SpecialistStatus.completed,
@@ -89,7 +89,7 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
                     "For security and privacy reasons, I can only provide information for orders and accounts directly associated with your verified login.",
                 ),
                 facts=(),
-                evidence_keys=(),
+                evidence_keys=("ref_order_privacy_fence",),
             )
 
         if not records:
@@ -142,7 +142,7 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
                     "For security and privacy reasons, I can only provide information for orders and accounts directly associated with your verified login.",
                 ),
                 facts=(),
-                evidence_keys=(),
+                evidence_keys=("ref_order_privacy_fence",),
             )
         entity_id = data["entity_id"]
         entity_type = str(data.get("entity_type", "order"))

@@ -21,9 +21,15 @@ class DynamicToolValidationError(ValueError):
 _IDENTITY_FIELDS = frozenset({"customer_id", "verified_customer_id", "tenant_id", "organization_id"})
 _FORBIDDEN_QUERY_FIELDS = frozenset({"query", "sql", "sql_query", "statement", "command"})
 _IDENTIFIER_PATTERNS = {
-    "get_order_summary": {"entity_id": re.compile(r"^ORD-[0-9A-Z]{3,32}$")},
-    "get_shipment_status": {"entity_id": re.compile(r"^(?:TRK|SHP)-[0-9A-Z]{3,32}$")},
-    "get_refund_status": {"entity_id": re.compile(r"^REF-[0-9A-Z]{3,32}$")},
+    "get_order_summary": {
+        "entity_id": re.compile(r"^(?:ORD-[0-9A-Za-z]{3,32}|[0-9a-fA-F]{8,32}|[0-9A-Za-z]{3,32})$")
+    },
+    "get_shipment_status": {
+        "entity_id": re.compile(r"^(?:(?:TRK|SHP|BR)-[0-9A-Za-z]{3,32}|[0-9a-fA-F]{8,32}|[0-9A-Za-z]{3,32})$")
+    },
+    "get_refund_status": {
+        "entity_id": re.compile(r"^(?:REF-[0-9A-Za-z]{3,32}|[0-9a-fA-F]{8,32}|[0-9A-Za-z]{3,32})$")
+    },
     "connector_query": {
         "connector_name": re.compile(r"^[a-z][a-z0-9_]{0,63}$"),
         "operation": re.compile(r"^[a-z][a-z0-9_]{0,63}$"),

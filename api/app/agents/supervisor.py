@@ -16,7 +16,10 @@ from app.providers import LLMMessage, LLMProvider, LLMRequest, get_llm_provider
 
 MAX_USER_MESSAGE_CHARS = 2_000
 MAX_REPLAN_ITERATIONS = 2
-_GREETING = re.compile(r"^(?:hi|hello|hey|good (?:morning|afternoon|evening)|thanks?|thank you)[!?.\s]*$", re.I)
+_GREETING = re.compile(
+    r"^(?:h+[iey]+l*o*|hew+l+o+|hey+|hi+|howdy|sup|good (?:morning|afternoon|evening|day)|greetings|thanks?|thank you)[!?.\s]*$",
+    re.I,
+)
 _IDENTITY_PATTERN = re.compile(
     r"\b("
     r"who\s*am\s*i|whoami|"

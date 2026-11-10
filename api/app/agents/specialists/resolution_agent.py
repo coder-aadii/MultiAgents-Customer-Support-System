@@ -46,7 +46,7 @@ class ResolutionSynthesisAgent(SpecialistAgent):
         recommendations = tuple(
             recommendation
             for finding in findings
-            if finding.status is SpecialistStatus.completed
+            if finding.status in {SpecialistStatus.completed, SpecialistStatus.authentication_required}
             for recommendation in finding.recommendations
         )
         if not recommendations:

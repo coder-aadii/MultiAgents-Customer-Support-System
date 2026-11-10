@@ -152,6 +152,28 @@ class FakeLLMProvider(LLMProvider):
             content = self._deterministic_classifier(current_user_text)
         elif "sources" in system_text.lower() or "cited_chunk_ids" in system_text.lower():
             content = self._deterministic_answer_generator(system_text, user_text)
+        elif "supervisor" in system_text.lower() or "investigation plan" in system_text.lower():
+            content = json.dumps({
+                "user_intents": ["inquiry"],
+                "tasks": [{
+                    "task_id": "primary_investigation",
+                    "assigned_agent": "knowledge_specialist",
+                    "task_description": "Investigate inquiry using knowledge base.",
+                    "required_inputs": {"query": current_user_text},
+                    "dependencies": [],
+                }],
+            })
+        elif "reflection" in system_text.lower() or "critic" in system_text.lower():
+            content = json.dumps({
+                "verdict": "approve",
+                "grounded": True,
+                "complete": True,
+                "issues": [],
+                "recommended_next_step": "deliver",
+                "missing_information": [],
+            })
+        elif request.response_format and request.response_format.get("type") == "json_object":
+            content = json.dumps({"status": "success", "message": "Deterministic response"})
         else:
             # Generic deterministic string
             h = hashlib.sha256(full_text.encode("utf-8")).hexdigest()[:8]

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from app.agents.base import AgentContext
-from app.agents.tools import DynamicToolInvoker
+from app.agents.tools import DynamicToolInvoker, DynamicToolValidationError, SecurityViolationError
 from app.agents.tools.schemas import DynamicToolCall
 from app.agents.specialists.base import SpecialistAgent
 from app.agents.specialists.schemas import SpecialistFindings, SpecialistStatus
 from app.connectors.registry import ConnectorRegistry, default_connector_registry
 from app.config import settings
+from app.gateway import EntityNotFoundError
 from app.gateway.tool_gateway import ToolGateway, default_tool_gateway
 
 
@@ -115,35 +116,47 @@ class BillingSpecialistAgent(SpecialistAgent):
         self, context: AgentContext, refund_id: str
     ) -> SpecialistFindings:
         assert context.visitor_session is not None
-        if settings.MCSS_DYNAMIC_TOOL_CALLING_ENABLED:
-            result = await self._tool_invoker.invoke(
-                self,
-                context,
-                DynamicToolCall(name="get_refund_status", arguments={"entity_id": refund_id}),
+        try:
+            if settings.MCSS_DYNAMIC_TOOL_CALLING_ENABLED:
+                result = await self._tool_invoker.invoke(
+                    self,
+                    context,
+                    DynamicToolCall(name="get_refund_status", arguments={"entity_id": refund_id}),
+                )
+                data = result.data
+                if not isinstance(data, dict) or not isinstance(data.get("entity_id"), str):
+                    return SpecialistFindings(specialist=self.agent_name, status=SpecialistStatus.no_data)
+                entity_id = data["entity_id"]
+                return SpecialistFindings(
+                    specialist=self.agent_name,
+                    status=SpecialistStatus.completed,
+                    evidence_keys=(f"ref_refund_{entity_id}",),
+                    confidence=1.0,
+                    recommendations=(f"Retrieved verified refund status for {data.get('title', entity_id)}.",),
+                )
+            record = await self._tool_gateway.execute_get_entity(
+                session=context.visitor_session,
+                entity_type="refund",
+                entity_id=refund_id,
+                db=context.db,
             )
-            data = result.data
-            if not isinstance(data, dict) or not isinstance(data.get("entity_id"), str):
-                return SpecialistFindings(specialist=self.agent_name, status=SpecialistStatus.no_data)
-            entity_id = data["entity_id"]
+            evidence_key = f"ref_refund_{record.entity_id}"
             return SpecialistFindings(
                 specialist=self.agent_name,
                 status=SpecialistStatus.completed,
-                evidence_keys=(f"ref_refund_{entity_id}",),
+                facts=tuple(record.extract_facts(evidence_key)),
+                evidence_keys=(evidence_key,),
                 confidence=1.0,
-                recommendations=(f"Retrieved verified refund status for {data.get('title', entity_id)}.",),
+                recommendations=(f"Retrieved verified refund status for {record.title}.",),
             )
-        record = await self._tool_gateway.execute_get_entity(
-            session=context.visitor_session,
-            entity_type="refund",
-            entity_id=refund_id,
-            db=context.db,
-        )
-        evidence_key = f"ref_refund_{record.entity_id}"
-        return SpecialistFindings(
-            specialist=self.agent_name,
-            status=SpecialistStatus.completed,
-            facts=tuple(record.extract_facts(evidence_key)),
-            evidence_keys=(evidence_key,),
-            confidence=1.0,
-            recommendations=(f"Retrieved verified refund status for {record.title}.",),
-        )
+        except (EntityNotFoundError, DynamicToolValidationError, SecurityViolationError):
+            return SpecialistFindings(
+                specialist=self.agent_name,
+                status=SpecialistStatus.completed,
+                confidence=1.0,
+                recommendations=(
+                    "For security and privacy reasons, I can only provide refund information for orders directly associated with your verified login.",
+                ),
+                facts=(),
+                evidence_keys=("ref_refund_privacy_fence",),
+            )

@@ -17,6 +17,7 @@ import { reconcileMessages, PollingController } from "../utils/reconciliation";
 import { toSafeErrorMessage } from "../utils/errors";
 import { generateUUID } from "../utils/uuid";
 import { LoadingState, EmptyState, ErrorState } from "../components/common/UIStates";
+import { FormattedMessage } from "../components/FormattedMessage";
 
 type StatusFilter = "all" | "open" | "waiting_for_staff" | "staff_active" | "closed";
 
@@ -989,7 +990,7 @@ export default function Inbox() {
                         </div>
 
                         <div
-                          className={`max-w-md lg:max-w-xl px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap break-words ${
+                          className={`max-w-md lg:max-w-xl px-4 py-2.5 rounded-2xl text-sm break-words ${
                             isStaff
                               ? "bg-blue-600 text-white rounded-tr-none"
                               : isVisitor
@@ -997,7 +998,7 @@ export default function Inbox() {
                               : "bg-purple-50 text-purple-900 border border-purple-200 rounded-tl-none"
                           }`}
                         >
-                          {msg.content}
+                          <FormattedMessage content={msg.content} />
 
                           {/* Assistant Source Chips & Confidence */}
                           {msg.sender_type === "assistant" && msg.metadata && (
@@ -1476,7 +1477,7 @@ export default function Inbox() {
                         </span>
                       </div>
                       <div
-                        className={`p-3 rounded-2xl max-w-[85%] text-xs shadow-xs whitespace-pre-wrap ${
+                        className={`p-3 rounded-2xl max-w-[85%] text-xs shadow-xs ${
                           isVisitor
                             ? "bg-white border border-gray-200 text-gray-900 rounded-tl-xs"
                             : m.sender_type === "assistant"
@@ -1484,7 +1485,7 @@ export default function Inbox() {
                             : "bg-blue-600 text-white rounded-tr-xs"
                         }`}
                       >
-                        {m.content}
+                        <FormattedMessage content={m.content} />
                       </div>
                     </div>
                   );
