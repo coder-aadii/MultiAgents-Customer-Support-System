@@ -69,6 +69,30 @@ def map_triage_to_handoff_reason(triage_reason: str) -> HandoffReason:
     return HandoffReason.unsupported_request
 
 
+async def is_ai_handling_allowed(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """Check if a conversation is open and eligible for AI processing.
+
+    Returns False if conversation is not open (e.g. waiting_for_staff, staff_active, closed)
+    or if an active (queued/claimed) handoff ticket exists.
+    """
+    conv_stmt = select(Conversation.status).where(Conversation.id == conversation_id)
+    conv_res = await db.execute(conv_stmt)
+    status = conv_res.scalar_one_or_none()
+    if status is None or status != ConversationStatus.open:
+        return False
+
+    handoff_stmt = (
+        select(Handoff.id)
+        .where(
+            Handoff.conversation_id == conversation_id,
+            Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+        )
+        .limit(1)
+    )
+    handoff_res = await db.execute(handoff_stmt)
+    return handoff_res.scalar_one_or_none() is None
+
+
 async def create_or_reuse_handoff(
     db: AsyncSession,
     conversation_id: uuid.UUID,
@@ -334,7 +358,7 @@ async def _handle_business_data_pipeline(
         select(Conversation).where(Conversation.id == conversation_id).with_for_update()
     )
     active_conv = recheck.scalar_one_or_none()
-    if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+    if not active_conv or active_conv.status != ConversationStatus.open:
         await db.commit()
         return None
 
@@ -517,8 +541,8 @@ async def _handle_business_data_pipeline(
                     client_message_id=uuid.uuid4(),
                     sender_type=SenderType.assistant,
                     content=(
-                        f"I could not find record {entity_id} in your account. "
-                        "Please verify the identifier or let me know if you would like me to connect you with support."
+                        "For security and privacy reasons, I can only provide information for orders and accounts directly associated with your verified login. "
+                        "If you need assistance with a different account or order, please have the account holder contact us directly, or let me know if you would like to speak with a human support agent."
                     ),
                     metadata_json={"action": "answer", "reason": "entity_not_found", "sources": []},
                     created_at=msg_now,
@@ -795,7 +819,19 @@ async def handle_assistant_pipeline(
         if not conv:
             return None
 
-        if conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        if conv.status != ConversationStatus.open:
+            return None
+
+        # Check if conversation has an active (queued/claimed) handoff ticket
+        h_stmt = (
+            select(Handoff.id)
+            .where(
+                Handoff.conversation_id == conversation_id,
+                Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+            )
+            .limit(1)
+        )
+        if (await db.execute(h_stmt)).scalar_one_or_none() is not None:
             return None
 
         now = datetime.now(UTC)
@@ -827,7 +863,7 @@ async def handle_assistant_pipeline(
                     select(Conversation).where(Conversation.id == conversation_id).with_for_update()
                 )
                 active_conv = recheck.scalar_one_or_none()
-                if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+                if not active_conv or active_conv.status != ConversationStatus.open:
                     await db.commit()
                     return None
 
@@ -889,7 +925,7 @@ async def handle_assistant_pipeline(
                                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
                             )
                         ).scalar_one_or_none()
-                        if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
+                        if active_conv and active_conv.status == ConversationStatus.open:
                             msg_now = datetime.now(UTC)
                             active_conv.last_message_at = msg_now
                             active_conv.updated_at = msg_now
@@ -926,7 +962,7 @@ async def handle_assistant_pipeline(
                             select(Conversation).where(Conversation.id == conversation_id).with_for_update()
                         )
                     ).scalar_one_or_none()
-                    if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
+                    if active_conv and active_conv.status == ConversationStatus.open:
                         challenge_prompt = (
                             f"Canceling order {order_id} cannot be undone. "
                             f"Reply '{conf_phrase}' to proceed, or CANCEL to abort."
@@ -958,7 +994,7 @@ async def handle_assistant_pipeline(
                         select(Conversation).where(Conversation.id == conversation_id).with_for_update()
                     )
                 ).scalar_one_or_none()
-                if active_conv and active_conv.status not in (ConversationStatus.staff_active, ConversationStatus.closed):
+                if active_conv and active_conv.status == ConversationStatus.open:
                     msg_now = datetime.now(UTC)
                     active_conv.last_message_at = msg_now
                     active_conv.updated_at = msg_now
@@ -1001,7 +1037,7 @@ async def handle_assistant_pipeline(
                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
             )
             active_conv = recheck.scalar_one_or_none()
-            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            if not active_conv or active_conv.status != ConversationStatus.open:
                 await db.commit()
                 return None
 
@@ -1069,7 +1105,7 @@ async def handle_assistant_pipeline(
                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
             )
             active_conv = recheck.scalar_one_or_none()
-            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            if not active_conv or active_conv.status != ConversationStatus.open:
                 await db.commit()
                 return None
 
@@ -1107,7 +1143,7 @@ async def handle_assistant_pipeline(
                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
             )
             active_conv = recheck.scalar_one_or_none()
-            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            if not active_conv or active_conv.status != ConversationStatus.open:
                 await db.commit()
                 return None
 
@@ -1148,7 +1184,7 @@ async def handle_assistant_pipeline(
                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
             )
             active_conv = recheck.scalar_one_or_none()
-            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            if not active_conv or active_conv.status != ConversationStatus.open:
                 await db.commit()
                 return None
 
@@ -1183,7 +1219,7 @@ async def handle_assistant_pipeline(
                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
             )
             active_conv = recheck.scalar_one_or_none()
-            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            if not active_conv or active_conv.status != ConversationStatus.open:
                 await db.commit()
                 return None
 
@@ -1226,7 +1262,7 @@ async def handle_assistant_pipeline(
                 select(Conversation).where(Conversation.id == conversation_id).with_for_update()
             )
             active_conv = recheck.scalar_one_or_none()
-            if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+            if not active_conv or active_conv.status != ConversationStatus.open:
                 await db.commit()
                 return None
 
@@ -1281,11 +1317,28 @@ async def handle_assistant_pipeline(
             select(Conversation).where(Conversation.id == conversation_id).with_for_update()
         )
         active_conv = recheck.scalar_one_or_none()
-        if not active_conv or active_conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        if not active_conv or active_conv.status != ConversationStatus.open:
             logger.info(
                 "Conversation %s transitioned to '%s' during generation; suppressing AI output.",
                 conversation_id,
                 active_conv.status.value if active_conv else "None",
+            )
+            await db.commit()
+            return None
+
+        # Check if conversation had an active handoff ticket created concurrently
+        h_stmt = (
+            select(Handoff.id)
+            .where(
+                Handoff.conversation_id == conversation_id,
+                Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+            )
+            .limit(1)
+        )
+        if (await db.execute(h_stmt)).scalar_one_or_none() is not None:
+            logger.info(
+                "Conversation %s has an active handoff ticket created during generation; suppressing AI output.",
+                conversation_id,
             )
             await db.commit()
             return None

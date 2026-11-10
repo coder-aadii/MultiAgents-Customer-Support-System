@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_event import ActorType, AuditEvent
 from app.models.conversation import Conversation, ConversationStatus
+from app.models.handoff import Handoff, HandoffStatus
 from app.models.message import Message, SenderType
 from app.models.visitor_session import VisitorSession
 from app.prompts.classifier import CLASSIFIER_SYSTEM_PROMPT
@@ -46,11 +47,22 @@ async def classify_message(
     if not conv:
         return None
 
-    if conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+    if conv.status != ConversationStatus.open:
         logger.info(
             "Skipping triage: conversation %s status is '%s'",
             conversation_id,
             conv.status.value,
+        )
+        return None
+
+    h_stmt = select(Handoff.id).where(
+        Handoff.conversation_id == conversation_id,
+        Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+    ).limit(1)
+    if (await db.execute(h_stmt)).scalar_one_or_none() is not None:
+        logger.info(
+            "Skipping triage: conversation %s has active handoff ticket",
+            conversation_id,
         )
         return None
 

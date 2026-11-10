@@ -21,6 +21,7 @@ from app.schemas.visitor import (
     WidgetSessionRequest,
     WidgetSessionResponse,
 )
+from app.services.assistant_service import is_ai_handling_allowed
 from app.services.conversation_service import get_conversation, list_messages, post_message
 from app.services.job_worker import enqueue_job, run_worker_cycle
 from app.services.visitor_service import (
@@ -122,7 +123,7 @@ async def create_visitor_current_message(
         sender_user_id=None,
         request_id=request_id,
     )
-    if created and settings.MCSS_ASSISTANT_ENABLED:
+    if created and settings.MCSS_ASSISTANT_ENABLED and await is_ai_handling_allowed(db, session.conversation_id):
         job = await enqueue_job(
             db=db,
             conversation_id=session.conversation_id,
@@ -197,7 +198,7 @@ async def create_visitor_message(
         sender_user_id=None,
         request_id=request_id,
     )
-    if created and settings.MCSS_ASSISTANT_ENABLED:
+    if created and settings.MCSS_ASSISTANT_ENABLED and await is_ai_handling_allowed(db, conversation_id):
         job = await enqueue_job(
             db=db,
             conversation_id=conversation_id,

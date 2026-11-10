@@ -16,10 +16,12 @@ from app.channels.base import BaseChannelAdapter, ChannelEvent, DeliveryResult, 
 from app.channels.identity import ChannelIdentityResolver
 from app.channels.security import WebhookDeduplicationGate
 from app.common.errors import ForbiddenError, NotFoundError, UnauthorizedError
+from app.config import settings
 from app.models.channel_configuration import ChannelConfiguration
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, SenderType
 from app.models.organization import Organization
+from app.services.assistant_service import is_ai_handling_allowed
 from app.services.job_worker import enqueue_job
 
 
@@ -117,13 +119,17 @@ class ChannelRegistry:
         db.add(new_msg)
         await db.flush()
 
-        # 8. Enqueue assistant background job for processing
-        if conversation.status in (ConversationStatus.open, ConversationStatus.waiting_for_staff):
+        # 8. Enqueue assistant background job for processing (only if open and not handed over)
+        job_id_to_run = None
+        if settings.MCSS_ASSISTANT_ENABLED and await is_ai_handling_allowed(db, conversation.id):
             job = await enqueue_job(db, conversation_id=conversation.id, message_id=new_msg.id)
-            from app.services.job_worker import run_worker_cycle
-            asyncio.create_task(run_worker_cycle(worker_id="omnichannel_bg_worker", job_id=job.id))
+            job_id_to_run = job.id
 
         await db.commit()
+
+        if job_id_to_run:
+            from app.services.job_worker import run_worker_cycle
+            asyncio.create_task(run_worker_cycle(worker_id="omnichannel_bg_worker", job_id=job_id_to_run))
         return {
             "status": "success",
             "conversation_id": str(conversation.id),

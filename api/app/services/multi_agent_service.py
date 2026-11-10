@@ -27,7 +27,7 @@ from app.agents.supervisor import SupervisorAgent, is_identity_query
 from app.config import settings
 from app.database import async_session_factory
 from app.models.conversation import Conversation, ConversationStatus
-from app.models.handoff import HandoffReason
+from app.models.handoff import Handoff, HandoffReason, HandoffStatus
 from app.models.message import Message, SenderType
 from app.models.visitor_session import VisitorSession
 from app.models.workflow_checkpoint import WorkflowCheckpoint
@@ -48,7 +48,16 @@ async def handle_multi_agent_pipeline(
     """Run one durable, evidence-grounded workflow and persist a safe response."""
     now = datetime.now(UTC)
     conversation = await db.scalar(select(Conversation).where(Conversation.id == conversation_id))
-    if conversation is None or conversation.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+    if conversation is None or conversation.status != ConversationStatus.open:
+        return None
+
+    has_handoff = await db.scalar(
+        select(Handoff.id).where(
+            Handoff.conversation_id == conversation_id,
+            Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+        ).limit(1)
+    )
+    if has_handoff is not None:
         return None
 
     clean_msg = re.sub(r"[^\w\s]", "", visitor_message_content.strip().lower()).strip()
@@ -58,7 +67,7 @@ async def handle_multi_agent_pipeline(
     }
     if clean_msg in greetings:
         active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-        if active is None or active.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        if active is None or active.status != ConversationStatus.open:
             await db.commit()
             return None
         now_msg = datetime.now(UTC)
@@ -90,7 +99,7 @@ async def handle_multi_agent_pipeline(
     ]
     if any(re.search(pat, clean_msg) for pat in off_topic_patterns):
         active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-        if active is None or active.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        if active is None or active.status != ConversationStatus.open:
             await db.commit()
             return None
         now_msg = datetime.now(UTC)
@@ -251,7 +260,17 @@ async def _persist_response(
     db: AsyncSession, conversation_id: uuid.UUID, tenant_id: uuid.UUID, content: str, resolution: object
 ) -> Message | None:
     conversation = await db.scalar(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
-    if conversation is None or conversation.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+    if conversation is None or conversation.status != ConversationStatus.open:
+        await db.commit()
+        return None
+
+    has_handoff = await db.scalar(
+        select(Handoff.id).where(
+            Handoff.conversation_id == conversation_id,
+            Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+        ).limit(1)
+    )
+    if has_handoff is not None:
         await db.commit()
         return None
     now = datetime.now(UTC)
@@ -274,7 +293,7 @@ async def _persist_response(
 
 async def _handoff(db: AsyncSession, conversation: Conversation, reason: str) -> Message | None:
     active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-    if active is None or active.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+    if active is None or active.status != ConversationStatus.open:
         await db.commit()
         return None
     await create_or_reuse_handoff(

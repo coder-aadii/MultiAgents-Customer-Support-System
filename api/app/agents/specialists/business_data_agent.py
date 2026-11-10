@@ -8,6 +8,7 @@ from app.agents.tools.schemas import DynamicToolCall
 from app.agents.specialists.base import SpecialistAgent
 from app.agents.specialists.schemas import SpecialistFindings, SpecialistStatus
 from app.config import settings
+from app.gateway import EntityNotFoundError
 from app.gateway.tool_gateway import ToolGateway, default_tool_gateway
 from app.schemas.evidence import VerifiedFact
 
@@ -40,43 +41,55 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
 
         assert context.visitor_session is not None
         entity_id = self.payload_string(context, "entity_id")
-        if settings.MCSS_DYNAMIC_TOOL_CALLING_ENABLED and entity_id and entity_type == "order":
-            result = await self._tool_invoker.invoke(
-                self, context, DynamicToolCall(name="get_order_summary", arguments={"entity_id": entity_id})
-            )
-            return self._dynamic_findings(result.data)
-        if entity_id:
-            records = [
-                await self._tool_gateway.execute_get_entity(
+        try:
+            if settings.MCSS_DYNAMIC_TOOL_CALLING_ENABLED and entity_id and entity_type == "order":
+                result = await self._tool_invoker.invoke(
+                    self, context, DynamicToolCall(name="get_order_summary", arguments={"entity_id": entity_id})
+                )
+                return self._dynamic_findings(result.data)
+            if entity_id:
+                records = [
+                    await self._tool_gateway.execute_get_entity(
+                        session=context.visitor_session,
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                        db=context.db,
+                    )
+                ]
+            elif entity_type == "customer":
+                cid = context.visitor_session.verified_customer_id
+                if not cid:
+                    return self.unauthenticated(self.agent_name)
+                records = [
+                    await self._tool_gateway.execute_get_entity(
+                        session=context.visitor_session,
+                        entity_type="customer",
+                        entity_id=cid,
+                        db=context.db,
+                    )
+                ]
+            elif entity_type == "order":
+                records = await self._tool_gateway.execute_list_entities(
                     session=context.visitor_session,
-                    entity_type=entity_type,
-                    entity_id=entity_id,
+                    entity_type="order",
                     db=context.db,
                 )
-            ]
-        elif entity_type == "customer":
-            cid = context.visitor_session.verified_customer_id
-            if not cid:
-                return self.unauthenticated(self.agent_name)
-            records = [
-                await self._tool_gateway.execute_get_entity(
-                    session=context.visitor_session,
-                    entity_type="customer",
-                    entity_id=cid,
-                    db=context.db,
+            else:
+                return SpecialistFindings(
+                    specialist=self.agent_name,
+                    status=SpecialistStatus.failed,
+                    failure_reason="CUSTOMER_ENTITY_ID_REQUIRED",
                 )
-            ]
-        elif entity_type == "order":
-            records = await self._tool_gateway.execute_list_entities(
-                session=context.visitor_session,
-                entity_type="order",
-                db=context.db,
-            )
-        else:
+        except EntityNotFoundError:
             return SpecialistFindings(
                 specialist=self.agent_name,
-                status=SpecialistStatus.failed,
-                failure_reason="CUSTOMER_ENTITY_ID_REQUIRED",
+                status=SpecialistStatus.completed,
+                confidence=1.0,
+                recommendations=(
+                    "For security and privacy reasons, I can only provide information for orders and accounts directly associated with your verified login.",
+                ),
+                facts=(),
+                evidence_keys=(),
             )
 
         if not records:
@@ -121,8 +134,16 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
 
     def _dynamic_findings(self, data: object) -> SpecialistFindings:
         if not isinstance(data, dict) or not isinstance(data.get("entity_id"), str):
-            return SpecialistFindings(specialist=self.agent_name, status=SpecialistStatus.no_data,
-                                      recommendations=("No matching customer records were found.",))
+            return SpecialistFindings(
+                specialist=self.agent_name,
+                status=SpecialistStatus.completed,
+                confidence=1.0,
+                recommendations=(
+                    "For security and privacy reasons, I can only provide information for orders and accounts directly associated with your verified login.",
+                ),
+                facts=(),
+                evidence_keys=(),
+            )
         entity_id = data["entity_id"]
         entity_type = str(data.get("entity_type", "order"))
         evidence_key = f"ref_{entity_type}_{entity_id}"

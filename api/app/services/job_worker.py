@@ -12,7 +12,7 @@ from app.config import settings
 from app.database import async_session_factory
 from app.models.assistant_job import AssistantJob, AssistantJobStatus
 from app.models.conversation import Conversation, ConversationStatus
-from app.models.handoff import HandoffReason
+from app.models.handoff import Handoff, HandoffReason, HandoffStatus
 from app.models.message import Message, SenderType
 from app.services.assistant_service import (
     HANDOFF_MESSAGE_TEXT,
@@ -141,11 +141,32 @@ async def process_claimed_job(
         conv_res = await db.execute(conv_stmt)
         conv = conv_res.scalar_one_or_none()
 
-        if not conv or conv.status in (ConversationStatus.staff_active, ConversationStatus.closed):
+        if not conv or conv.status != ConversationStatus.open:
             logger.info(
-                "Conversation %s is inactive (%s); discarding job %s",
+                "Conversation %s is not open for AI (%s); discarding job %s",
                 job.conversation_id,
                 conv.status.value if conv else "not_found",
+                job.id,
+            )
+            job.status = AssistantJobStatus.discarded.value
+            job.completed_at = datetime.now(UTC)
+            await db.commit()
+            return True
+
+        # Check if conversation has an active handoff ticket
+        h_stmt = (
+            select(Handoff.id)
+            .where(
+                Handoff.conversation_id == job.conversation_id,
+                Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+            )
+            .limit(1)
+        )
+        h_res = await db.execute(h_stmt)
+        if h_res.scalar_one_or_none() is not None:
+            logger.info(
+                "Conversation %s has pending/claimed handoff ticket; discarding job %s",
+                job.conversation_id,
                 job.id,
             )
             job.status = AssistantJobStatus.discarded.value
@@ -255,29 +276,37 @@ async def process_claimed_job(
             conv_res = await db.execute(conv_stmt)
             active_conv = conv_res.scalar_one_or_none()
 
-            if active_conv and active_conv.status not in (
-                ConversationStatus.staff_active,
-                ConversationStatus.closed,
-            ):
-                await create_or_reuse_handoff(
-                    db=db,
-                    conversation_id=conversation_id,
-                    reason=HandoffReason.unsupported_request,
-                    summary=f"Worker terminal failure: {type(execution_error).__name__}",
+            if active_conv and active_conv.status == ConversationStatus.open:
+                # Invariant: Only create and deliver terminal handoff message if conversation does not already have an active handoff ticket
+                h_check = (
+                    select(Handoff.id)
+                    .where(
+                        Handoff.conversation_id == conversation_id,
+                        Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+                    )
+                    .limit(1)
                 )
-                active_conv.status = ConversationStatus.waiting_for_staff
-                active_conv.last_message_at = now
-                active_conv.updated_at = now
+                existing_h = (await db.execute(h_check)).scalar_one_or_none()
+                if existing_h is None:
+                    await create_or_reuse_handoff(
+                        db=db,
+                        conversation_id=conversation_id,
+                        reason=HandoffReason.unsupported_request,
+                        summary=f"Worker terminal failure: {type(execution_error).__name__}",
+                    )
+                    active_conv.status = ConversationStatus.waiting_for_staff
+                    active_conv.last_message_at = now
+                    active_conv.updated_at = now
 
-                handoff_msg = Message(
-                    conversation_id=conversation_id,
-                    client_message_id=uuid.uuid4(),
-                    sender_type=SenderType.assistant,
-                    content=HANDOFF_MESSAGE_TEXT,
-                    metadata_json={"action": "handoff", "reason": "worker_fatal_failure"},
-                    created_at=now,
-                )
-                db.add(handoff_msg)
+                    handoff_msg = Message(
+                        conversation_id=conversation_id,
+                        client_message_id=uuid.uuid4(),
+                        sender_type=SenderType.assistant,
+                        content=HANDOFF_MESSAGE_TEXT,
+                        metadata_json={"action": "handoff", "reason": "worker_fatal_failure"},
+                        created_at=now,
+                    )
+                    db.add(handoff_msg)
         except Exception as handoff_exc:
             logger.error("Failed to commit terminal handoff fallback: %s", handoff_exc)
 
