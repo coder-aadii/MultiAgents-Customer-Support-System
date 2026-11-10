@@ -91,6 +91,7 @@ export interface KnowledgeDocument {
   title: string;
   source_type: SourceType;
   source_filename?: string | null;
+  content_hash?: string | null;
   status: DocumentStatus;
   ingestion_status: IngestionStatus;
   ingestion_error_code?: string | null;

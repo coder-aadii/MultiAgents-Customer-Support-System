@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 from fastapi import (
@@ -13,12 +14,13 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.errors import AppException
 from app.database import get_session
 from app.dependencies import require_admin, require_staff
-from app.models.knowledge_document import DocumentStatus, IngestionStatus
+from app.models.knowledge_document import DocumentStatus, IngestionStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.common import PaginatedResponse
 from app.schemas.knowledge import (
@@ -85,6 +87,25 @@ async def create_knowledge_document(
     db: AsyncSession = Depends(get_session),
 ) -> DocumentDetailResponse:
     """Create a draft knowledge document and enqueue durable background ingestion."""
+    content_hash = hashlib.sha256(payload.content.encode("utf-8")).hexdigest()
+    dup_stmt = (
+        select(KnowledgeDocument)
+        .where(
+            KnowledgeDocument.organization_id == current_user.organization_id,
+            KnowledgeDocument.content_hash == content_hash,
+            KnowledgeDocument.status.in_([DocumentStatus.draft, DocumentStatus.published]),
+        )
+        .limit(1)
+    )
+    dup = (await db.execute(dup_stmt)).scalars().first()
+    if dup:
+        raise AppException(
+            "DUPLICATE_DOCUMENT",
+            f"An identical document '{dup.title}' already exists in your Knowledge Base.",
+            status_code=status.HTTP_409_CONFLICT,
+            details={"existing_document_id": str(dup.id), "existing_title": dup.title},
+        )
+
     use_background = settings.MCSS_ENV != "test"
     doc = await create_document(
         db=db,
@@ -92,6 +113,7 @@ async def create_knowledge_document(
         source_type=payload.source_type,
         content=payload.content,
         user_id=current_user.id,
+        content_hash=content_hash,
         enqueue_background=use_background,
     )
     if use_background:
@@ -122,6 +144,25 @@ async def upload_knowledge_document(
     except IngestionError as e:
         raise AppException(e.code, e.message, status_code=400) from e
 
+    content_hash = hashlib.sha256(raw_bytes).hexdigest()
+    dup_stmt = (
+        select(KnowledgeDocument)
+        .where(
+            KnowledgeDocument.organization_id == current_user.organization_id,
+            KnowledgeDocument.content_hash == content_hash,
+            KnowledgeDocument.status.in_([DocumentStatus.draft, DocumentStatus.published]),
+        )
+        .limit(1)
+    )
+    dup = (await db.execute(dup_stmt)).scalars().first()
+    if dup:
+        raise AppException(
+            "DUPLICATE_DOCUMENT",
+            f"An identical document '{dup.title}' already exists in your Knowledge Base.",
+            status_code=status.HTTP_409_CONFLICT,
+            details={"existing_document_id": str(dup.id), "existing_title": dup.title},
+        )
+
     use_background = settings.MCSS_ENV != "test"
     doc = await create_document(
         db=db,
@@ -130,6 +171,7 @@ async def upload_knowledge_document(
         content=content,
         user_id=current_user.id,
         source_filename=clean_filename,
+        content_hash=content_hash,
         raw_bytes=None,  # Pre-extracted content avoids duplicate parsing overhead
         enqueue_background=use_background,
     )

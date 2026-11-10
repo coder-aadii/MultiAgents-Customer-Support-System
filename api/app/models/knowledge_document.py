@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +38,16 @@ class IngestionStatus(str, enum.Enum):
 
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
+    __table_args__ = (
+        Index("ix_knowledge_documents_org_hash", "organization_id", "content_hash"),
+        Index(
+            "uq_knowledge_documents_org_active_hash",
+            "organization_id",
+            "content_hash",
+            unique=True,
+            postgresql_where=text("status IN ('draft', 'published') AND content_hash IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -52,6 +62,7 @@ class KnowledgeDocument(Base):
         Enum(SourceType, name="source_type_enum"), nullable=False
     )
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus, name="document_status_enum"),

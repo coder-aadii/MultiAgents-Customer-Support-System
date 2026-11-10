@@ -52,6 +52,7 @@ const ERROR_CODE_MAP: Record<string, string> = {
   INVALID_DOCUMENT_STATE: "This operation cannot be performed on the document in its current status.",
   TIMEOUT: "Processing timed out. Please retry.",
   PROVIDER_ERROR: "Embedding generation failed. Please try again later.",
+  DUPLICATE_DOCUMENT: "An identical document already exists in your Knowledge Base.",
 };
 
 export function getApiErrorCode(error: unknown): string | null {
@@ -83,6 +84,9 @@ export function toSafeErrorMessage(error: unknown, fallbackMessage = "An unexpec
 
     if (code && ERROR_CODE_MAP[code]) {
       return ERROR_CODE_MAP[code];
+    }
+    if (data?.error?.message) {
+      return String(data.error.message);
     }
 
     if (error.response?.status === 401) {

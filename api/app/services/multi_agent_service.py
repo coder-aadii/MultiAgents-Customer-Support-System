@@ -309,7 +309,15 @@ async def _handoff(db: AsyncSession, conversation: Conversation, reason: str) ->
         client_message_id=uuid.uuid4(),
         sender_type=SenderType.assistant,
         content=HANDOFF_MESSAGE_TEXT,
-        metadata_json={"action": "handoff", "reason": "phase_6_safe_fallback"},
+        metadata_json={
+            "action": "handoff",
+            "reason": "phase_6_safe_fallback",
+            "staff_diagnostic": {
+                "failure_stage": "multi_agent_orchestration",
+                "code": "WORKFLOW_HALTED",
+                "detail": f"Phase 6 workflow halted: {reason}"[:500],
+            },
+        },
         created_at=now,
     )
     db.add(message)

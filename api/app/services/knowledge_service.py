@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import UTC, datetime
 
@@ -31,14 +32,17 @@ async def create_document(
     content: str,
     user_id: uuid.UUID,
     source_filename: str | None = None,
+    content_hash: str | None = None,
     raw_bytes: bytes | None = None,
     enqueue_background: bool = False,
 ) -> KnowledgeDocument:
     """Create a new draft knowledge document; enqueues background ingestion when enqueue_background=True."""
+    computed_hash = content_hash or hashlib.sha256(content.encode("utf-8")).hexdigest()
     doc = KnowledgeDocument(
         title=title,
         source_type=source_type,
         source_filename=source_filename,
+        content_hash=computed_hash,
         content=content,
         status=DocumentStatus.draft,
         ingestion_status=IngestionStatus.pending,
@@ -222,7 +226,27 @@ async def update_document(
     if title is not None and title.strip():
         doc.title = title.strip()
     if content is not None and content.strip() and content != doc.content:
+        new_hash = hashlib.sha256(content.strip().encode("utf-8")).hexdigest()
+        dup_stmt = (
+            select(KnowledgeDocument)
+            .where(
+                KnowledgeDocument.organization_id == doc.organization_id,
+                KnowledgeDocument.content_hash == new_hash,
+                KnowledgeDocument.id != doc.id,
+                KnowledgeDocument.status.in_([DocumentStatus.draft, DocumentStatus.published]),
+            )
+            .limit(1)
+        )
+        dup = (await db.execute(dup_stmt)).scalars().first()
+        if dup:
+            raise AppException(
+                "DUPLICATE_DOCUMENT",
+                f"An identical document '{dup.title}' already exists in your Knowledge Base.",
+                status_code=409,
+                details={"existing_document_id": str(dup.id), "existing_title": dup.title},
+            )
         doc.content = content
+        doc.content_hash = new_hash
         content_changed = True
 
     await db.commit()

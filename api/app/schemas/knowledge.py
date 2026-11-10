@@ -34,6 +34,7 @@ class DocumentResponse(BaseModel):
     title: str
     source_type: SourceType
     source_filename: str | None
+    content_hash: str | None = None
     status: DocumentStatus
     ingestion_status: IngestionStatus
     ingestion_error_code: str | None

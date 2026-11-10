@@ -34,6 +34,15 @@ from app.tenancy.resolver import resolve_tenant
 widget_router = APIRouter(prefix="/widget", tags=["widget"])
 
 
+def _sanitize_visitor_message(msg: MessageResponse) -> MessageResponse:
+    """Strip internal staff diagnostic fields from message metadata before returning to visitor."""
+    if msg.metadata and "staff_diagnostic" in msg.metadata:
+        cleaned_meta = dict(msg.metadata)
+        cleaned_meta.pop("staff_diagnostic", None)
+        return msg.model_copy(update={"metadata": cleaned_meta})
+    return msg
+
+
 @widget_router.post("/sessions", response_model=WidgetSessionResponse)
 async def create_session(
     request: Request,
@@ -95,8 +104,13 @@ async def get_visitor_current_messages(
     session: VisitorSession = Depends(get_visitor_session),
     db: AsyncSession = Depends(get_session),
 ) -> PaginatedResponse[MessageResponse]:
-    return await list_messages(
+    res = await list_messages(
         db, conversation_id=session.conversation_id, cursor=cursor, limit=limit
+    )
+    return PaginatedResponse(
+        items=[_sanitize_visitor_message(m) for m in res.items],
+        next_cursor=res.next_cursor,
+        has_more=res.has_more,
     )
 
 
@@ -131,7 +145,7 @@ async def create_visitor_current_message(
         )
         await db.commit()
         background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker", job_id=job.id)
-    return msg
+    return _sanitize_visitor_message(msg)
 
 
 @widget_router.patch("/profile", response_model=VisitorResponse)
@@ -171,7 +185,12 @@ async def get_visitor_messages(
     session: VisitorSession = Depends(validate_visitor_conversation),
     db: AsyncSession = Depends(get_session),
 ) -> PaginatedResponse[MessageResponse]:
-    return await list_messages(db, conversation_id=conversation_id, cursor=cursor, limit=limit)
+    res = await list_messages(db, conversation_id=conversation_id, cursor=cursor, limit=limit)
+    return PaginatedResponse(
+        items=[_sanitize_visitor_message(m) for m in res.items],
+        next_cursor=res.next_cursor,
+        has_more=res.has_more,
+    )
 
 
 @widget_router.post(
@@ -206,4 +225,4 @@ async def create_visitor_message(
         )
         await db.commit()
         background_tasks.add_task(run_worker_cycle, worker_id="widget_bg_worker", job_id=job.id)
-    return msg
+    return _sanitize_visitor_message(msg)

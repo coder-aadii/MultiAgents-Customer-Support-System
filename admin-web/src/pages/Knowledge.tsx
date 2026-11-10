@@ -23,10 +23,18 @@ export interface UploadQueueItem {
   id: string;
   file: File;
   title: string;
+  contentHash?: string;
   status: "queued" | "uploading" | "uploaded" | "processing" | "succeeded" | "failed";
   ingestionStatus?: IngestionStatus;
   error?: string;
   documentId?: string;
+}
+
+async function computeFileSha256(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -221,21 +229,61 @@ export default function Knowledge() {
   };
 
   // File Selection and Multi-Upload Handlers
-  const handleFilesSelected = (selectedFiles: FileList | File[]) => {
+  const handleFilesSelected = async (selectedFiles: FileList | File[]) => {
     const filesArray = Array.from(selectedFiles);
     if (filesArray.length === 0) return;
 
-    const newItems: UploadQueueItem[] = filesArray.map((file, idx) => {
-      const cleanTitle = file.name.replace(/\.[^/.]+$/, "");
-      const isOversized = file.size > MAX_UPLOAD_BYTES;
-      return {
-        id: `${file.name}-${file.size}-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
-        file,
-        title: cleanTitle,
-        status: isOversized ? "failed" : "queued",
-        error: isOversized ? t("knowledge.fileOversizedError") : undefined,
-      };
-    });
+    const seenInBatch = new Set<string>();
+
+    const newItems: UploadQueueItem[] = await Promise.all(
+      filesArray.map(async (file, idx) => {
+        const cleanTitle = file.name.replace(/\.[^/.]+$/, "");
+        const isOversized = file.size > MAX_UPLOAD_BYTES;
+
+        let contentHash: string | undefined = undefined;
+        try {
+          contentHash = await computeFileSha256(file);
+        } catch {
+          // Fallback if Web Crypto is unavailable
+        }
+
+        const isDuplicateInBatch = Boolean(contentHash && seenInBatch.has(contentHash));
+        if (contentHash) {
+          seenInBatch.add(contentHash);
+        }
+
+        const isDuplicateInQueue = Boolean(
+          contentHash && uploadQueue.some((it) => it.contentHash && it.contentHash === contentHash)
+        );
+
+        const matchingDoc = contentHash
+          ? documents.find((doc) => doc.status !== "archived" && doc.content_hash === contentHash)
+          : undefined;
+
+        let itemStatus: UploadQueueItem["status"] = "queued";
+        let errorMsg: string | undefined = undefined;
+
+        if (isOversized) {
+          itemStatus = "failed";
+          errorMsg = t("knowledge.fileOversizedError");
+        } else if (isDuplicateInBatch || isDuplicateInQueue) {
+          itemStatus = "failed";
+          errorMsg = "Duplicate document with identical content already selected in upload queue.";
+        } else if (matchingDoc) {
+          itemStatus = "failed";
+          errorMsg = `An active document with identical content ('${matchingDoc.title}') already exists in your Knowledge Base.`;
+        }
+
+        return {
+          id: `${file.name}-${file.size}-${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 6)}`,
+          file,
+          title: cleanTitle,
+          contentHash,
+          status: itemStatus,
+          error: errorMsg,
+        };
+      })
+    );
 
     setUploadQueue((prev) => [...prev, ...newItems]);
     setSubmitError(null);

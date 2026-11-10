@@ -303,7 +303,15 @@ async def process_claimed_job(
                         client_message_id=uuid.uuid4(),
                         sender_type=SenderType.assistant,
                         content=HANDOFF_MESSAGE_TEXT,
-                        metadata_json={"action": "handoff", "reason": "worker_fatal_failure"},
+                        metadata_json={
+                            "action": "handoff",
+                            "reason": "worker_fatal_failure",
+                            "staff_diagnostic": {
+                                "failure_stage": "job_worker_execution",
+                                "code": "TERMINAL_JOB_FAILURE",
+                                "detail": f"Worker terminal failure: {type(execution_error).__name__}",
+                            },
+                        },
                         created_at=now,
                     )
                     db.add(handoff_msg)

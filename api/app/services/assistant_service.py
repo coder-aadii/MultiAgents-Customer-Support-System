@@ -338,7 +338,15 @@ async def _trigger_staff_handoff(
         client_message_id=uuid.uuid4(),
         sender_type=SenderType.assistant,
         content=HANDOFF_MESSAGE_TEXT,
-        metadata_json={"action": "handoff", "reason": summary[:120]},
+        metadata_json={
+            "action": "handoff",
+            "reason": summary[:120],
+            "staff_diagnostic": {
+                "failure_stage": "assistant_pipeline",
+                "code": reason.value if hasattr(reason, "value") else str(reason),
+                "detail": summary[:500],
+            },
+        },
         created_at=msg_now,
     )
     db.add(handoff_msg)
@@ -1093,7 +1101,15 @@ async def handle_assistant_pipeline(
                 client_message_id=uuid.uuid4(),
                 sender_type=SenderType.assistant,
                 content=HANDOFF_MESSAGE_TEXT,
-                metadata_json={"action": "handoff", "reason": triage.reason},
+                metadata_json={
+                    "action": "handoff",
+                    "reason": triage.reason,
+                    "staff_diagnostic": {
+                        "failure_stage": "triage_classification",
+                        "code": triage.reason,
+                        "detail": f"Triage routed to staff: {triage.reason}",
+                    },
+                },
                 created_at=msg_now,
             )
             db.add(handoff_msg)
@@ -1288,6 +1304,11 @@ async def handle_assistant_pipeline(
                 metadata_json={
                     "action": "handoff",
                     "reason": "retrieval_error" if retrieval_failed else "no_evidence_available",
+                    "staff_diagnostic": {
+                        "failure_stage": "knowledge_retrieval",
+                        "code": "RETRIEVAL_ERROR" if retrieval_failed else "NO_EVIDENCE_AVAILABLE",
+                        "detail": summary_msg,
+                    },
                 },
                 created_at=msg_now,
             )
@@ -1368,6 +1389,11 @@ async def handle_assistant_pipeline(
                 metadata_json={
                     "action": "handoff",
                     "reason": answer_result.reason or "generator_handoff",
+                    "staff_diagnostic": {
+                        "failure_stage": "answer_generation",
+                        "code": answer_result.reason or "GENERATION_HANDOFF",
+                        "detail": f"Generation handoff: {answer_result.reason or 'unsupported'}",
+                    },
                 },
                 created_at=msg_now,
             )

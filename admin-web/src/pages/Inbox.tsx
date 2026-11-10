@@ -896,6 +896,24 @@ export default function Inbox() {
                               )}
                             </div>
                           )}
+
+                          {/* Staff-Only Failure Diagnostic Callout */}
+                          {msg.sender_type === "assistant" && (msg.metadata as any)?.staff_diagnostic && (
+                            <div className="mt-2.5 pt-2 border-t border-amber-300/60 bg-amber-50/80 -mx-4 -mb-2.5 p-3 rounded-b-2xl border-b border-l border-r border-amber-300 text-xs text-amber-950">
+                              <div className="flex items-center gap-1.5 font-semibold text-amber-800 mb-1">
+                                <span>⚠️ Staff Diagnostic: {String((msg.metadata as any).staff_diagnostic.code || "HANDOFF").toUpperCase()}</span>
+                              </div>
+                              <div className="font-mono text-[11px] whitespace-pre-wrap text-amber-900">
+                                {String((msg.metadata as any).staff_diagnostic.detail || "No diagnostic details provided.")}
+                              </div>
+                              {(msg.metadata as any).staff_diagnostic.failure_stage && (
+                                <div className="mt-1.5 text-[10px] text-amber-700 flex items-center justify-between">
+                                  <span>Stage: {String((msg.metadata as any).staff_diagnostic.failure_stage)}</span>
+                                  <span className="italic text-gray-400">Staff view only</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
