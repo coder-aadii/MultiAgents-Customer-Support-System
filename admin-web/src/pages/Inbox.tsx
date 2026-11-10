@@ -9,6 +9,8 @@ import {
   type ConversationNote,
   type Message,
   type AgentRosterItem,
+  type CustomerHistoryResponse,
+  type CustomerPastConversationItem,
 } from "../api/client";
 import { useNotification } from "../context/NotificationContext";
 import { reconcileMessages, PollingController } from "../utils/reconciliation";
@@ -30,6 +32,21 @@ export default function Inbox() {
   const [listCursor, setListCursor] = useState<string | null>(null);
   const [listHasMore, setListHasMore] = useState(false);
   const [loadingMoreList, setLoadingMoreList] = useState(false);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+
+  // Customer past conversations state
+  const [customerHistory, setCustomerHistory] = useState<CustomerHistoryResponse | null>(null);
+  const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
+
+  // Past transcript modal state
+  const [viewingPastConv, setViewingPastConv] = useState<CustomerPastConversationItem | null>(null);
+  const [pastMessages, setPastMessages] = useState<Message[]>([]);
+  const [pastMessagesLoading, setPastMessagesLoading] = useState(false);
+  const [pastMessagesError, setPastMessagesError] = useState<string | null>(null);
 
   // Active conversation state
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
@@ -73,6 +90,14 @@ export default function Inbox() {
 
   const activeConvCursorRef = useRef<string | null>(null);
 
+  // Search Debounce (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // ---------------------------------------------------------------------------
   // 1. Fetch conversations list
   // ---------------------------------------------------------------------------
@@ -84,7 +109,11 @@ export default function Inbox() {
 
         const filterStatus = statusFilter === "all" ? undefined : statusFilter;
         const resp = await conversationsApi.list(
-          { status: filterStatus, limit: 25 },
+          {
+            status: filterStatus,
+            q: debouncedSearchQuery || undefined,
+            limit: 25,
+          },
           signal
         );
 
@@ -118,7 +147,7 @@ export default function Inbox() {
         if (isInitial) setListLoading(false);
       }
     },
-    [statusFilter]
+    [statusFilter, debouncedSearchQuery]
   );
 
   // Load more conversations (cursor pagination)
@@ -129,6 +158,7 @@ export default function Inbox() {
       const filterStatus = statusFilter === "all" ? undefined : statusFilter;
       const resp = await conversationsApi.list({
         status: filterStatus,
+        q: debouncedSearchQuery || undefined,
         cursor: listCursor,
         limit: 25,
       });
@@ -248,6 +278,46 @@ export default function Inbox() {
       timelineBottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages.length]);
+
+  // Fetch Customer History when active conversation changes
+  useEffect(() => {
+    if (!selectedConvId) {
+      setCustomerHistory(null);
+      return;
+    }
+    let cancelled = false;
+    setCustomerHistoryLoading(true);
+    conversationsApi
+      .getCustomerHistory(selectedConvId)
+      .then((data) => {
+        if (!cancelled) setCustomerHistory(data);
+      })
+      .catch(() => {
+        if (!cancelled) setCustomerHistory(null);
+      })
+      .finally(() => {
+        if (!cancelled) setCustomerHistoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedConvId]);
+
+  const handleOpenPastTranscript = async (pastConv: CustomerPastConversationItem) => {
+    setViewingPastConv(pastConv);
+    setPastMessages([]);
+    setPastMessagesLoading(true);
+    setPastMessagesError(null);
+    try {
+      const resp = await messagesApi.list(pastConv.id, { limit: 100 });
+      setPastMessages(resp.items);
+    } catch (err) {
+      setPastMessagesError(toSafeErrorMessage(err, "Failed to load past transcript."));
+    } finally {
+      setPastMessagesLoading(false);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // 4. Close Action
@@ -469,6 +539,48 @@ export default function Inbox() {
           showMobileDetail ? "hidden md:flex" : "flex"
         }`}
       >
+        {/* Search Input Box */}
+        <div className="p-3 pb-2 border-b border-gray-100 bg-white">
+          <div className="relative">
+            <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-gray-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search name, email, ID, or query…"
+              className="w-full pl-8 pr-7 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-gray-900 placeholder-gray-400 transition-colors"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute inset-y-0 right-0 flex items-center pr-2 text-gray-400 hover:text-gray-600"
+                title="Clear search"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {debouncedSearchQuery && (
+            <div className="mt-1 flex items-center justify-between text-[11px] text-gray-500 px-0.5">
+              <span className="truncate">Searching: <strong className="text-gray-800">"{debouncedSearchQuery}"</strong></span>
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="text-blue-600 hover:underline font-medium text-[10px] ml-1"
+              >
+                Reset
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Status Filter Tabs */}
         <div className="p-3 border-b border-gray-200 bg-white">
           <label htmlFor="status-filter" className="sr-only">
@@ -509,7 +621,9 @@ export default function Inbox() {
 
           {!listLoading && !listError && conversations.length === 0 && (
             <div className="p-6 text-center text-sm text-gray-500">
-              {t("inbox.noConversations")}
+              {debouncedSearchQuery
+                ? `No conversations matching "${debouncedSearchQuery}".`
+                : t("inbox.noConversations")}
             </div>
           )}
 
@@ -654,6 +768,21 @@ export default function Inbox() {
 
               {/* Take-over & Close controls */}
               <div className="flex items-center space-x-2 flex-shrink-0">
+                {/* Customer Past Conversations button */}
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryDrawer((prev) => !prev)}
+                  className="px-2.5 py-1.5 text-xs font-semibold rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 transition-colors whitespace-nowrap flex items-center gap-1.5 border border-indigo-200/60"
+                  title="View previous conversations from this customer"
+                >
+                  <svg className="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>
+                    Past Chats ({customerHistoryLoading ? "…" : customerHistory?.past_conversations.length || 0})
+                  </span>
+                </button>
+
                 {activeConversation.status !== "closed" && (
                   <>
                     {/* Combined Assign / Reassign dropdown */}
@@ -1132,7 +1261,248 @@ export default function Inbox() {
               </div>
             </div>
           </div>
+
+          {/* Customer Previous Chats Section */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Previous Chats
+              </h3>
+              <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-indigo-100 text-indigo-800">
+                {customerHistoryLoading ? "…" : customerHistory?.past_conversations.length || 0}
+              </span>
+            </div>
+
+            {customerHistoryLoading && (
+              <div className="p-3 bg-white rounded-md border border-gray-200 text-center text-xs text-gray-400">
+                Loading history…
+              </div>
+            )}
+
+            {!customerHistoryLoading && (!customerHistory?.past_conversations || customerHistory.past_conversations.length === 0) && (
+              <div className="p-3 bg-white rounded-md border border-gray-200 text-center text-xs text-gray-400 italic">
+                No previous conversations
+              </div>
+            )}
+
+            {!customerHistoryLoading && customerHistory?.past_conversations && customerHistory.past_conversations.length > 0 && (
+              <div className="space-y-2">
+                {customerHistory.past_conversations.map((pc) => (
+                  <div
+                    key={pc.id}
+                    className="p-2.5 bg-white rounded-md border border-gray-200 hover:border-indigo-300 hover:shadow-xs transition-all text-xs"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-mono text-[10px] text-gray-500">#{pc.id.substring(0, 8)}</span>
+                      {getStatusBadge(pc.status)}
+                    </div>
+                    {pc.last_message_preview && (
+                      <p className="text-gray-600 line-clamp-2 text-[11px] mb-1.5 italic">
+                        "{pc.last_message_preview}"
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between text-[10px] text-gray-400 pt-1 border-t border-gray-100">
+                      <span>{new Date(pc.created_at).toLocaleDateString()}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPastTranscript(pc)}
+                        className="font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                      >
+                        View Transcript ({pc.total_messages})
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </aside>
+      )}
+
+      {/* Customer Previous Chats Slide-over Drawer */}
+      {showHistoryDrawer && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/30 backdrop-blur-xs flex justify-end animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-md bg-white shadow-2xl border-l border-gray-200 flex flex-col h-full animate-in slide-in-from-right duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="customer-history-title"
+          >
+            <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </span>
+                <div>
+                  <h3 id="customer-history-title" className="text-sm font-semibold text-gray-900">
+                    Previous Chats
+                  </h3>
+                  <p className="text-[11px] text-gray-500">
+                    Customer: {customerHistory?.visitor_name || customerHistory?.visitor_email || "Anonymous"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHistoryDrawer(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                title="Close drawer"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {customerHistoryLoading && (
+                <div className="py-12 text-center text-xs text-gray-400">
+                  <div className="w-6 h-6 border-2 border-indigo-600/30 border-t-indigo-600 rounded-full animate-spin mx-auto mb-2" />
+                  Loading past conversations…
+                </div>
+              )}
+
+              {!customerHistoryLoading && (!customerHistory?.past_conversations || customerHistory.past_conversations.length === 0) && (
+                <div className="py-12 text-center text-xs text-gray-500">
+                  No prior conversations on record for this customer.
+                </div>
+              )}
+
+              {!customerHistoryLoading && customerHistory?.past_conversations && customerHistory.past_conversations.length > 0 && (
+                customerHistory.past_conversations.map((pc) => (
+                  <div
+                    key={pc.id}
+                    className="p-3.5 bg-gray-50/70 border border-gray-200 rounded-xl hover:border-indigo-300 hover:bg-white hover:shadow-xs transition-all space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-xs font-semibold text-gray-700">#{pc.id.substring(0, 8)}</span>
+                      {getStatusBadge(pc.status)}
+                    </div>
+                    {pc.title && (
+                      <div className="text-xs font-medium text-gray-900 truncate">{pc.title}</div>
+                    )}
+                    {pc.last_message_preview && (
+                      <p className="text-xs text-gray-600 line-clamp-2 italic bg-white p-2 rounded-lg border border-gray-100">
+                        "{pc.last_message_preview}"
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between text-[11px] text-gray-500 pt-1">
+                      <span>Created: {new Date(pc.created_at).toLocaleDateString()}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPastTranscript(pc)}
+                        className="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                      >
+                        Read Transcript ({pc.total_messages})
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Read-Only Past Conversation Transcript Modal */}
+      {viewingPastConv && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-150 overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="past-transcript-title"
+          >
+            {/* Modal Header */}
+            <div className="p-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 id="past-transcript-title" className="text-sm font-bold text-gray-900">
+                    Past Transcript #{viewingPastConv.id.substring(0, 8)}
+                  </h3>
+                  {getStatusBadge(viewingPastConv.status)}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5">
+                  Started on {new Date(viewingPastConv.created_at).toLocaleString()} • {viewingPastConv.assigned_agent_name ? `Assigned to ${viewingPastConv.assigned_agent_name}` : "Unassigned"}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingPastConv(null)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                title="Close modal"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Transcript Messages Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50">
+              {pastMessagesLoading && (
+                <div className="py-12 text-center text-xs text-gray-400">
+                  <div className="w-6 h-6 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin mx-auto mb-2" />
+                  Loading transcript messages…
+                </div>
+              )}
+
+              {pastMessagesError && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                  {pastMessagesError}
+                </div>
+              )}
+
+              {!pastMessagesLoading && !pastMessagesError && pastMessages.length === 0 && (
+                <div className="py-12 text-center text-xs text-gray-500 italic">
+                  No messages recorded in this conversation.
+                </div>
+              )}
+
+              {!pastMessagesLoading &&
+                pastMessages.map((m) => {
+                  const isVisitor = m.sender_type === "visitor";
+                  return (
+                    <div
+                      key={m.id}
+                      className={`flex flex-col ${isVisitor ? "items-start" : "items-end"}`}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1 px-1">
+                        {getSenderBadge(m.sender_type, m.sender_user_id)}
+                        <span className="text-[10px] text-gray-400">
+                          {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <div
+                        className={`p-3 rounded-2xl max-w-[85%] text-xs shadow-xs whitespace-pre-wrap ${
+                          isVisitor
+                            ? "bg-white border border-gray-200 text-gray-900 rounded-tl-xs"
+                            : m.sender_type === "assistant"
+                            ? "bg-purple-50 border border-purple-200 text-purple-950 rounded-tr-xs"
+                            : "bg-blue-600 text-white rounded-tr-xs"
+                        }`}
+                      >
+                        {m.content}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 border-t border-gray-200 bg-white flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingPastConv(null)}
+                className="px-4 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Close Transcript
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Custom Confirmation Modal for Closing Ticket */}

@@ -11,12 +11,17 @@ from app.models.conversation import ConversationStatus
 from app.models.message import SenderType
 from app.models.user import User
 from app.schemas.common import PaginatedResponse
-from app.schemas.conversation import ConversationDetailResponse, ConversationResponse
+from app.schemas.conversation import (
+    ConversationDetailResponse,
+    ConversationResponse,
+    CustomerHistoryResponse,
+)
 from app.schemas.message import MessageCreate, MessageResponse
 from app.services.conversation_service import (
     claim_conversation,
     close_conversation,
     get_conversation,
+    get_customer_history,
     list_conversations,
     list_messages,
     post_message,
@@ -28,12 +33,19 @@ conversations_router = APIRouter(prefix="/conversations", tags=["conversations"]
 @conversations_router.get("", response_model=PaginatedResponse[ConversationResponse])
 async def get_conversations(
     status: ConversationStatus | None = Query(default=None),
+    q: str | None = Query(
+        default=None,
+        description="Search customer name, email, conversation UUID, or message text query",
+    ),
+    customer_id: str | None = Query(default=None, description="Search by customer / visitor ID"),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
     current_user: User = Depends(require_staff),
     db: AsyncSession = Depends(get_session),
 ) -> PaginatedResponse[ConversationResponse]:
-    return await list_conversations(db, status=status, cursor=cursor, limit=limit)
+    return await list_conversations(
+        db, status=status, q=q, customer_id=customer_id, cursor=cursor, limit=limit
+    )
 
 
 @conversations_router.get("/{conversation_id}", response_model=ConversationDetailResponse)
@@ -43,6 +55,18 @@ async def get_conversation_detail(
     db: AsyncSession = Depends(get_session),
 ) -> ConversationDetailResponse:
     return await get_conversation(db, conversation_id=conversation_id)
+
+
+@conversations_router.get(
+    "/{conversation_id}/customer-history",
+    response_model=CustomerHistoryResponse,
+)
+async def get_conversation_customer_history(
+    conversation_id: uuid.UUID,
+    current_user: User = Depends(require_staff),
+    db: AsyncSession = Depends(get_session),
+) -> CustomerHistoryResponse:
+    return await get_customer_history(db, conversation_id=conversation_id)
 
 
 @conversations_router.post("/{conversation_id}/claim", response_model=ConversationResponse)

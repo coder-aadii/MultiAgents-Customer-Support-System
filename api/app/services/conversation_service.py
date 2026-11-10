@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, asc, desc, or_, select
+from sqlalchemy import and_, asc, cast, desc, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,8 +15,14 @@ from app.models.conversation import Conversation, ConversationStatus
 from app.models.handoff import Handoff, HandoffStatus
 from app.models.message import Message, SenderType
 from app.models.user import User
+from app.models.visitor import Visitor
 from app.schemas.common import PaginatedResponse
-from app.schemas.conversation import ConversationDetailResponse, ConversationResponse
+from app.schemas.conversation import (
+    ConversationDetailResponse,
+    ConversationResponse,
+    CustomerHistoryResponse,
+    CustomerPastConversationItem,
+)
 from app.schemas.handoff import HandoffResponse
 from app.schemas.message import MessageResponse
 from app.tenancy.context import TenantContext
@@ -44,9 +50,17 @@ async def record_audit(
     await db.flush()
 
 
+def _escape_like_pattern(text: str) -> str:
+    """Escape SQL LIKE/ILIKE wildcards so user input is treated as literal text."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 async def list_conversations(
     db: AsyncSession,
     status: ConversationStatus | None = None,
+    q: str | None = None,
+    customer_id: str | None = None,
     cursor: str | None = None,
     limit: int = 25,
 ) -> PaginatedResponse[ConversationResponse]:
@@ -58,6 +72,50 @@ async def list_conversations(
 
     if status:
         query = query.where(Conversation.status == status)
+
+    if customer_id and customer_id.strip():
+        cid = customer_id.strip()
+        try:
+            cust_uuid = uuid.UUID(cid)
+            query = query.where(Conversation.visitor_id == cust_uuid)
+        except ValueError:
+            # Avoid unindexed full table scans on invalid customer UUID inputs
+            query = query.where(Conversation.id.is_(None))
+
+    if q and q.strip():
+        clean_q = q.strip()
+        try:
+            search_uuid = uuid.UUID(clean_q)
+            query = query.where(
+                or_(
+                    Conversation.id == search_uuid,
+                    Conversation.visitor_id == search_uuid,
+                )
+            )
+        except ValueError:
+            pattern = _escape_like_pattern(clean_q)
+            msg_subq = (
+                select(Message.conversation_id)
+                .where(Message.content.ilike(pattern))
+                .distinct()
+            )
+            msg_subq = TenantQueryScoper.apply_scope(msg_subq, Message).scalar_subquery()
+
+            vis_subq = select(Visitor.id).where(
+                or_(
+                    Visitor.name.ilike(pattern),
+                    Visitor.email.ilike(pattern),
+                )
+            )
+            vis_subq = TenantQueryScoper.apply_scope(vis_subq, Visitor).scalar_subquery()
+
+            query = query.where(
+                or_(
+                    Conversation.visitor_id.in_(vis_subq),
+                    Conversation.id.in_(msg_subq),
+                    Conversation.title.ilike(pattern),
+                )
+            )
 
     if cursor:
         dt, item_id = decode_cursor(cursor)
@@ -85,6 +143,100 @@ async def list_conversations(
         items=[ConversationResponse.model_validate(c) for c in items],
         next_cursor=next_cursor,
         has_more=has_more,
+    )
+
+
+async def get_customer_history(
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+) -> CustomerHistoryResponse:
+    conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
+    conv_stmt = TenantQueryScoper.apply_scope(conv_stmt, Conversation)
+    conv = (await db.execute(conv_stmt)).scalar_one_or_none()
+    if not conv:
+        raise NotFoundError("Conversation not found")
+
+    vis = (await db.execute(select(Visitor).where(Visitor.id == conv.visitor_id))).scalar_one_or_none()
+
+    past_stmt = (
+        select(Conversation)
+        .options(selectinload(Conversation.assignee))
+        .where(
+            Conversation.visitor_id == conv.visitor_id,
+            Conversation.id != conv.id,
+        )
+        .order_by(desc(Conversation.created_at))
+        .limit(50)
+    )
+    past_stmt = TenantQueryScoper.apply_scope(past_stmt, Conversation)
+    past_convs = list((await db.execute(past_stmt)).scalars().all())
+
+    if not past_convs:
+        return CustomerHistoryResponse(
+            visitor_id=conv.visitor_id,
+            visitor_name=vis.name if vis else None,
+            visitor_email=vis.email if vis else None,
+            past_conversations=[],
+        )
+
+    past_ids = [pc.id for pc in past_convs]
+
+    # Batch 1: Aggregate message counts in a single query
+    count_query = (
+        select(Message.conversation_id, func.count(Message.id).label("cnt"))
+        .where(Message.conversation_id.in_(past_ids))
+        .group_by(Message.conversation_id)
+    )
+    count_query = TenantQueryScoper.apply_scope(count_query, Message)
+    count_rows = (await db.execute(count_query)).all()
+    counts_map = {row[0]: row[1] for row in count_rows}
+
+    # Batch 2: Fetch latest message per conversation via window function subquery
+    rn_subq = (
+        select(
+            Message.conversation_id,
+            Message.content,
+            func.row_number()
+            .over(
+                partition_by=Message.conversation_id,
+                order_by=desc(Message.created_at),
+            )
+            .label("rn"),
+        )
+        .where(Message.conversation_id.in_(past_ids))
+    )
+    rn_subq = TenantQueryScoper.apply_scope(rn_subq, Message).subquery()
+
+    last_msg_query = select(rn_subq.c.conversation_id, rn_subq.c.content).where(
+        rn_subq.c.rn == 1
+    )
+    last_msg_rows = (await db.execute(last_msg_query)).all()
+    previews_map = {row[0]: row[1] for row in last_msg_rows}
+
+    past_items: list[CustomerPastConversationItem] = []
+    for pc in past_convs:
+        msg_count = counts_map.get(pc.id, 0)
+        last_msg = previews_map.get(pc.id)
+        preview = (last_msg[:120] + "...") if last_msg and len(last_msg) > 120 else last_msg
+
+        past_items.append(
+            CustomerPastConversationItem(
+                id=pc.id,
+                status=pc.status,
+                title=pc.title,
+                created_at=pc.created_at,
+                last_message_at=pc.last_message_at,
+                assigned_agent_name=pc.assignee.display_name if pc.assignee else None,
+                last_message_preview=preview,
+                total_messages=msg_count,
+            )
+        )
+
+    return CustomerHistoryResponse(
+        visitor_id=conv.visitor_id,
+        visitor_name=vis.name if vis else None,
+        visitor_email=vis.email if vis else None,
+        past_conversations=past_items,
     )
 
 

@@ -30,6 +30,24 @@ export interface VisitorInfo {
   last_seen_at: string;
 }
 
+export interface CustomerPastConversationItem {
+  id: string;
+  status: "open" | "waiting_for_staff" | "staff_active" | "closed";
+  title: string | null;
+  created_at: string;
+  last_message_at: string;
+  assigned_agent_name: string | null;
+  last_message_preview: string | null;
+  total_messages: number;
+}
+
+export interface CustomerHistoryResponse {
+  visitor_id: string;
+  visitor_name: string | null;
+  visitor_email: string | null;
+  past_conversations: CustomerPastConversationItem[];
+}
+
 export interface Conversation {
   id: string;
   visitor_id: string;
@@ -251,7 +269,13 @@ export const authApi = {
 
 export const conversationsApi = {
   list: async (
-    params?: { status?: string; cursor?: string | null; limit?: number },
+    params?: {
+      status?: string;
+      q?: string;
+      customer_id?: string;
+      cursor?: string | null;
+      limit?: number;
+    },
     signal?: AbortSignal
   ): Promise<PaginatedResponse<Conversation>> => {
     const res = await apiClient.get<PaginatedResponse<Conversation>>("/conversations", {
@@ -262,6 +286,16 @@ export const conversationsApi = {
   },
   get: async (id: string, signal?: AbortSignal): Promise<Conversation> => {
     const res = await apiClient.get<Conversation>(`/conversations/${id}`, { signal });
+    return res.data;
+  },
+  getCustomerHistory: async (
+    conversationId: string,
+    signal?: AbortSignal
+  ): Promise<CustomerHistoryResponse> => {
+    const res = await apiClient.get<CustomerHistoryResponse>(
+      `/conversations/${conversationId}/customer-history`,
+      { signal }
+    );
     return res.data;
   },
   claim: async (id: string): Promise<Conversation> => {

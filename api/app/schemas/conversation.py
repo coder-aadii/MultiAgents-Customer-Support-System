@@ -32,3 +32,23 @@ class ConversationResponse(BaseModel):
 
 class ConversationDetailResponse(ConversationResponse):
     pass
+
+
+class CustomerPastConversationItem(BaseModel):
+    id: uuid.UUID
+    status: ConversationStatus
+    title: str | None = None
+    created_at: datetime
+    last_message_at: datetime
+    assigned_agent_name: str | None = None
+    last_message_preview: str | None = None
+    total_messages: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class CustomerHistoryResponse(BaseModel):
+    visitor_id: uuid.UUID
+    visitor_name: str | None = None
+    visitor_email: str | None = None
+    past_conversations: list[CustomerPastConversationItem] = []
