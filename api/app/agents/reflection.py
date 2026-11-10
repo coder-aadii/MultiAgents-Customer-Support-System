@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import math
+import re
 import time
 from enum import StrEnum
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -200,7 +206,9 @@ class ResolutionCriticAgent(BaseAgent):
     async def critique(self, review_input: ReflectionInput) -> ReflectionResult:
         """Request strict JSON criticism from the provider using only redacted structured context."""
         safe_input = self._sanitize_input(review_input)
+        critic_model = settings.MCSS_REFLECTION_MODEL or None
         request = LLMRequest(
+            model=critic_model,
             messages=[
                 LLMMessage(role="system", content=REFLECTION_CRITIC_SYSTEM_PROMPT),
                 LLMMessage(role="user", content=json.dumps(safe_input, default=str)),
@@ -217,6 +225,26 @@ class ResolutionCriticAgent(BaseAgent):
                 timeout=self._timeout_seconds,
             )
             raw = json.loads(response.content)
+
+            # Defensive sanitization of critic output to prevent minor formatting discrepancies from crashing validation
+            if isinstance(raw, dict):
+                if "issues" in raw and isinstance(raw["issues"], list):
+                    for issue in raw["issues"]:
+                        if isinstance(issue, dict) and "evidence_references" in issue:
+                            if isinstance(issue["evidence_references"], list):
+                                issue["evidence_references"] = [
+                                    ref for ref in issue["evidence_references"]
+                                    if isinstance(ref, str) and ref.startswith("ref_")
+                                ]
+                if "missing_information" in raw and isinstance(raw["missing_information"], list):
+                    allowed_facts = {f.value for f in RequiredFact}
+                    raw["missing_information"] = [
+                        fact for fact in raw["missing_information"]
+                        if isinstance(fact, str) and fact in allowed_facts
+                    ]
+                if "verdict" in raw and ("recommended_next_step" not in raw or not raw["recommended_next_step"]):
+                    raw["recommended_next_step"] = "deliver" if raw["verdict"] == "approve" else raw["verdict"]
+
             raw["token_usage"] = {
                 "prompt": response.prompt_tokens,
                 "completion": response.completion_tokens,
@@ -225,11 +253,47 @@ class ResolutionCriticAgent(BaseAgent):
             raw["latency_ms"] = (time.monotonic() - started) * 1000
             return ReflectionResult.model_validate(raw)
         except Exception as exc:
+            logger.error("Reflection critic failed: %s: %s", type(exc).__name__, exc, exc_info=True)
             raise ReflectionAgentError("critic response was invalid or timed out") from exc
 
-    @staticmethod
-    def _sanitize_input(review_input: ReflectionInput) -> dict:
+    @classmethod
+    def _estimate_tokens(cls, data: Any) -> int:
+        serialized = json.dumps(data, default=str)
+        return max(1, math.ceil(len(serialized) / 3.5))
+
+    @classmethod
+    def _sanitize_input(cls, review_input: ReflectionInput) -> dict:
         payload = review_input.model_dump(mode="json")
+        # Strip redundant nested facts and recommendations inside findings to avoid duplicate payload inflation
+        if "findings" in payload and isinstance(payload["findings"], list):
+            for item in payload["findings"]:
+                if isinstance(item, dict):
+                    item.pop("facts", None)
+                    item.pop("recommendations", None)
+
+        # Budget reflection input tokens: compact long facts if input exceeds configured budget
+        max_budget = settings.MCSS_REFLECTION_MAX_INPUT_TOKENS
+        if cls._estimate_tokens(payload) > max_budget and "facts" in payload and isinstance(payload["facts"], list):
+            compacted_facts = []
+            for fact in payload["facts"]:
+                if not isinstance(fact, dict):
+                    compacted_facts.append(fact)
+                    continue
+                fact_copy = dict(fact)
+                val = fact_copy.get("field_value")
+                if fact_copy.get("field_name") == "content" and isinstance(val, str) and len(val) > 400:
+                    lines = [ln.strip() for ln in val.split("\n") if ln.strip()]
+                    salient = [
+                        ln for ln in lines
+                        if re.search(r"(\$|\b\d+\b|policy|refund|return|days?|status|shipped|delivered|pending|cancel|fee|except|unless|must|cannot)", ln, re.I)
+                    ]
+                    if salient:
+                        fact_copy["field_value"] = " ".join(salient)[:800]
+                    else:
+                        fact_copy["field_value"] = val[:400]
+                compacted_facts.append(fact_copy)
+            payload["facts"] = compacted_facts
+
         sanitized = mask_pii(redact_sensitive_data(payload))
         if not isinstance(sanitized, dict):
             raise ReflectionAgentError("reflection input could not be sanitized")

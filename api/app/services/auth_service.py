@@ -83,7 +83,11 @@ async def login_user(
         metadata={"email": user.email, "request_id": request_id},
     )
 
-    access_token = create_access_jwt(str(user.id), user.role.value)
+    access_token = create_access_jwt(
+        str(user.id),
+        user.role.value,
+        org_id=str(user.organization_id) if user.organization_id else None,
+    )
     raw_refresh = generate_opaque_token()
     token_hash = hash_token(raw_refresh)
 
@@ -176,7 +180,11 @@ async def rotate_refresh_token(
     )
     await db.commit()
 
-    new_access = create_access_jwt(str(user.id), user.role.value)
+    new_access = create_access_jwt(
+        str(user.id),
+        user.role.value,
+        org_id=str(user.organization_id) if user.organization_id else None,
+    )
     refresh_response = RefreshResponse(
         access_token=new_access,
         token_type="bearer",

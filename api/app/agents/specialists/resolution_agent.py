@@ -49,7 +49,15 @@ class ResolutionSynthesisAgent(SpecialistAgent):
             if finding.status in {SpecialistStatus.completed, SpecialistStatus.authentication_required}
             for recommendation in finding.recommendations
         )
-        if not recommendations:
+        seen: set[str] = set()
+        unique_recs: list[str] = []
+        for recommendation in recommendations:
+            normalized = recommendation.strip()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                unique_recs.append(recommendation)
+
+        if not unique_recs:
             return SpecialistFindings(
                 specialist=self.agent_name,
                 status=SpecialistStatus.no_data,
@@ -59,7 +67,7 @@ class ResolutionSynthesisAgent(SpecialistAgent):
 
         safe_recommendations = tuple(
             recommendation
-            for recommendation in recommendations
+            for recommendation in unique_recs
             if not self._UNTRUSTED_INSTRUCTION.search(recommendation)
         )
         if not safe_recommendations:

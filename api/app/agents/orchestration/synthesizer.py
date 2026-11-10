@@ -9,8 +9,9 @@ from time import monotonic
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.base import AgentContext
+from app.agents.base import AgentBudget, AgentContext
 from app.agents.audit import record_agent_execution
+from app.config import settings
 from app.agents.orchestration.aggregator import AggregatedEvidence
 from app.agents.reflection import (
     ReflectionAgentError,
@@ -132,17 +133,25 @@ class MultiAgentSynthesisCoordinator:
                 reflection_input = ReflectionInput(
                         customer_request=customer_request,
                         draft_response=draft,
-                        findings=[finding.model_dump(mode="json") for finding in active_findings],
+                        findings=[
+                            finding.model_dump(mode="json", exclude={"facts", "recommendations"})
+                            for finding in active_findings
+                        ],
                         facts=active_evidence.facts,
                         citations=active_evidence.citations,
                     )
+                reflection_budget = AgentBudget(
+                    max_timeout_seconds=settings.MCSS_REFLECTION_TIMEOUT_SECONDS,
+                    max_execution_tokens=context.budget.max_execution_tokens,
+                    max_tool_calls=context.budget.max_tool_calls,
+                )
                 reflection_context = AgentContext(
                     tenant_id=context.tenant_id,
                     conversation_id=context.conversation_id,
                     execution_phase="reflection",
                     payload={"reflection_input": reflection_input.model_dump(mode="json")},
                     verified_customer_id=context.verified_customer_id,
-                    budget=context.budget,
+                    budget=reflection_budget,
                     db=context.db,
                     visitor_session=context.visitor_session,
                 )
@@ -194,7 +203,7 @@ class MultiAgentSynthesisCoordinator:
                     draft = (
                         await self._revision_generator(draft, reflection)
                         if self._revision_generator is not None
-                        else await self._default_revision(context, active_findings, active_evidence)
+                        else await self._default_revision(context, active_findings, active_evidence, reflection, draft)
                     )
                 except Exception:
                     return await self._fail_closed(
@@ -306,7 +315,45 @@ class MultiAgentSynthesisCoordinator:
         context: AgentContext,
         findings: list[SpecialistFindings],
         evidence: AggregatedEvidence,
+        reflection: ReflectionResult | None = None,
+        original_draft: str | None = None,
     ) -> str:
+        if reflection and reflection.issues and original_draft:
+            try:
+                from app.providers import get_llm_provider, LLMRequest, LLMMessage
+                provider = get_llm_provider()
+                facts_text = "\n".join(
+                    f"- {f.field_name}: {f.field_value}"
+                    for f in evidence.facts[:8]
+                )
+                issues_text = "\n".join(
+                    f"- {issue.issue_type}: {issue.description}"
+                    for issue in reflection.issues
+                )
+                prompt = (
+                    f"Revise the customer draft response to resolve these feedback issues:\n"
+                    f"{issues_text}\n\n"
+                    f"Verified Facts:\n{facts_text}\n\n"
+                    f"Current Draft:\n{original_draft}\n\n"
+                    f"Provide only the revised plain text response, strictly grounded in the verified facts without inventing any details."
+                )
+                req = LLMRequest(
+                    messages=[
+                        LLMMessage(role="system", content="You are a customer support resolution reviser. Return ONLY the plain text revised customer response."),
+                        LLMMessage(role="user", content=prompt),
+                    ],
+                    temperature=0.0,
+                    max_tokens=512,
+                    timeout=settings.MCSS_REFLECTION_TIMEOUT_SECONDS,
+                )
+                resp = await provider.chat_complete(req)
+                revised = resp.content.strip()
+                if revised and self._is_deterministically_grounded(revised, evidence):
+                    return revised
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Default revision generator failed: %s", e)
+
         draft = await self._synthesize_draft(context, findings, evidence)
         if isinstance(draft, ResolutionResult):
             raise RuntimeError("revision synthesis failed")

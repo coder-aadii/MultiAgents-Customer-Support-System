@@ -197,8 +197,9 @@ class OpenAILLMProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
+        effective_model = request.model or self.model
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": effective_model,
             "messages": [{"role": m.role, "content": m.content} for m in request.messages],
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
@@ -211,7 +212,7 @@ class OpenAILLMProvider(LLMProvider):
 
         for attempt in range(self.max_retries + 1):
             start_time = time.monotonic()
-            self.metrics_hook.on_request_start("openai", "chat_complete", self.model)
+            self.metrics_hook.on_request_start("openai", "chat_complete", effective_model)
             try:
                 async with httpx.AsyncClient(timeout=effective_timeout) as client:
                     resp = await client.post(url, json=payload, headers=headers)
@@ -246,7 +247,7 @@ class OpenAILLMProvider(LLMProvider):
                         )
                         logger.info(
                             "OpenAI chat completion succeeded: model=%s, duration_ms=%.2f, total_tokens=%d",
-                            self.model,
+                            effective_model,
                             duration_ms,
                             total_tokens,
                         )
@@ -255,39 +256,42 @@ class OpenAILLMProvider(LLMProvider):
                             prompt_tokens=prompt_tokens,
                             completion_tokens=completion_tokens,
                             total_tokens=total_tokens,
-                            model=data.get("model", self.model),
+                            model=data.get("model", effective_model),
                         )
 
                     if resp.status_code in (401, 403):
-                        raise ProviderAuthError(f"LLM authentication failed with status {resp.status_code}")
+                        raise ProviderAuthError(f"LLM authentication failed with status {resp.status_code}: {resp.text}")
                     if resp.status_code == 400:
-                        raise ProviderBadRequestError(f"LLM request rejected: status {resp.status_code}")
-                    if resp.status_code == 429:
-                        raise ProviderRateLimitError("LLM rate limit exceeded")
+                        raise ProviderBadRequestError(f"LLM request rejected: status {resp.status_code}: {resp.text}")
+                    if resp.status_code == 429 or (resp.status_code == 413 and "rate_limit_exceeded" in resp.text):
+                        raise ProviderRateLimitError(f"LLM rate limit exceeded ({resp.status_code}): {resp.text}")
                     if resp.status_code >= 500:
-                        raise ProviderConnectionError(f"LLM provider server error: status {resp.status_code}")
+                        raise ProviderConnectionError(f"LLM provider server error: status {resp.status_code}: {resp.text}")
 
-                    raise ProviderResponseError(f"LLM provider unexpected status {resp.status_code}")
+                    raise ProviderResponseError(f"LLM provider unexpected status {resp.status_code}: {resp.text}")
 
             except httpx.TimeoutException as e:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 last_error = ProviderTimeoutError("LLM chat request timed out")
-                self.metrics_hook.on_request_failure("openai", "chat_complete", self.model, duration_ms, last_error)
+                self.metrics_hook.on_request_failure("openai", "chat_complete", effective_model, duration_ms, last_error)
             except httpx.RequestError as e:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 last_error = ProviderConnectionError(f"LLM connection error: {type(e).__name__}")
-                self.metrics_hook.on_request_failure("openai", "chat_complete", self.model, duration_ms, last_error)
+                self.metrics_hook.on_request_failure("openai", "chat_complete", effective_model, duration_ms, last_error)
             except ProviderError as e:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 last_error = e
-                self.metrics_hook.on_request_failure("openai", "chat_complete", self.model, duration_ms, last_error)
+                self.metrics_hook.on_request_failure("openai", "chat_complete", effective_model, duration_ms, last_error)
             except Exception as e:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 last_error = ProviderResponseError(f"Unexpected error calling chat completion: {type(e).__name__}")
-                self.metrics_hook.on_request_failure("openai", "chat_complete", self.model, duration_ms, last_error)
+                self.metrics_hook.on_request_failure("openai", "chat_complete", effective_model, duration_ms, last_error)
 
             if attempt < self.max_retries and is_retryable_error(last_error):
-                backoff = min(0.2 * (2**attempt), 1.0)
+                if isinstance(last_error, ProviderRateLimitError):
+                    backoff = min(1.0 * (2**attempt), 3.0)
+                else:
+                    backoff = min(0.2 * (2**attempt), 1.0)
                 logger.warning(
                     "Retrying transient LLM error (attempt %d/%d) after %.2fs",
                     attempt + 1,

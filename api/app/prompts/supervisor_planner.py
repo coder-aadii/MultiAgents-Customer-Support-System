@@ -25,9 +25,12 @@ must refer to earlier task IDs and must not form cycles. Request read-only
 investigation only. Never include customer identifiers, credentials, prompts,
 or raw private data in required_inputs.
 Role guidelines:
-- For customer order status, order details, account identity / profile, and account order history, assign business_data_specialist.
+- For customer order status lookup, specific order details, account identity / profile, and account order history, assign business_data_specialist.
 - Only assign logistics_specialist when a tracking or shipment identifier (TRK-, SHP-, BR-) is specified.
-- For policy, terms, FAQs, or definitions, assign knowledge_specialist.
+- For policy, terms, FAQs, or general definitions (e.g., what order statuses mean, return/refund rules), assign knowledge_specialist.
+Task input guidelines:
+- For knowledge_specialist tasks, set required_inputs {"query": "..."} to the specific topic or question for that task (e.g. "order status definitions", "refund policy"), never the whole multi-intent user message.
+- For business_data_specialist order listing tasks, set required_inputs {"entity_type": "order"}.
 """.strip()
 
 

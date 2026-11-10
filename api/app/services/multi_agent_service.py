@@ -38,6 +38,16 @@ from app.services.assistant_service import (
 )
 
 
+async def _has_active_handoff(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    has_handoff = await db.scalar(
+        select(Handoff.id).where(
+            Handoff.conversation_id == conversation_id,
+            Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
+        ).limit(1)
+    )
+    return has_handoff is not None
+
+
 async def handle_multi_agent_pipeline(
     *,
     db: AsyncSession,
@@ -51,13 +61,7 @@ async def handle_multi_agent_pipeline(
     if conversation is None or conversation.status != ConversationStatus.open:
         return None
 
-    has_handoff = await db.scalar(
-        select(Handoff.id).where(
-            Handoff.conversation_id == conversation_id,
-            Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
-        ).limit(1)
-    )
-    if has_handoff is not None:
+    if await _has_active_handoff(db, conversation_id):
         return None
 
     clean_msg = re.sub(r"[^\w\s]", "", visitor_message_content.strip().lower()).strip()
@@ -67,7 +71,7 @@ async def handle_multi_agent_pipeline(
     }
     if clean_msg in greetings:
         active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-        if active is None or active.status != ConversationStatus.open:
+        if active is None or active.status != ConversationStatus.open or await _has_active_handoff(db, active.id):
             await db.commit()
             return None
         now_msg = datetime.now(UTC)
@@ -99,7 +103,7 @@ async def handle_multi_agent_pipeline(
     ]
     if any(re.search(pat, clean_msg) for pat in off_topic_patterns):
         active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-        if active is None or active.status != ConversationStatus.open:
+        if active is None or active.status != ConversationStatus.open or await _has_active_handoff(db, active.id):
             await db.commit()
             return None
         now_msg = datetime.now(UTC)
@@ -124,7 +128,7 @@ async def handle_multi_agent_pipeline(
     ]
     if any(re.search(pat, visitor_message_content.lower()) for pat in cross_user_patterns):
         active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-        if active is None or active.status != ConversationStatus.open:
+        if active is None or active.status != ConversationStatus.open or await _has_active_handoff(db, active.id):
             await db.commit()
             return None
         now_msg = datetime.now(UTC)
@@ -185,7 +189,7 @@ async def handle_multi_agent_pipeline(
         )
         if is_personal_query:
             active = await db.scalar(select(Conversation).where(Conversation.id == conversation.id).with_for_update())
-            if active is None or active.status != ConversationStatus.open:
+            if active is None or active.status != ConversationStatus.open or await _has_active_handoff(db, active.id):
                 await db.commit()
                 return None
             now_msg = datetime.now(UTC)
@@ -350,17 +354,7 @@ async def _persist_response(
     db: AsyncSession, conversation_id: uuid.UUID, tenant_id: uuid.UUID, content: str, resolution: object
 ) -> Message | None:
     conversation = await db.scalar(select(Conversation).where(Conversation.id == conversation_id).with_for_update())
-    if conversation is None or conversation.status != ConversationStatus.open:
-        await db.commit()
-        return None
-
-    has_handoff = await db.scalar(
-        select(Handoff.id).where(
-            Handoff.conversation_id == conversation_id,
-            Handoff.status.in_([HandoffStatus.queued, HandoffStatus.claimed]),
-        ).limit(1)
-    )
-    if has_handoff is not None:
+    if conversation is None or conversation.status != ConversationStatus.open or await _has_active_handoff(db, conversation_id):
         await db.commit()
         return None
     now = datetime.now(UTC)

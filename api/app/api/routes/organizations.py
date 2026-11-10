@@ -55,6 +55,14 @@ async def provision_organization(
 @orgs_router.get("/current", response_model=OrganizationResponse)
 async def get_current_organization(
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(
+        require_org_role(
+            OrgMemberRole.agent,
+            OrgMemberRole.supervisor,
+            OrgMemberRole.admin,
+            OrgMemberRole.owner,
+        )
+    ),
 ) -> OrganizationResponse:
     """Get active tenant organization profile and configuration."""
     return OrganizationResponse(

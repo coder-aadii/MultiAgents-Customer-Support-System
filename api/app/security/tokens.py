@@ -26,6 +26,8 @@ def create_access_jwt(
     subject: str,
     role: str,
     additional_claims: dict[str, Any] | None = None,
+    org_id: str | None = None,
+    **kwargs: Any,
 ) -> str:
     """Create short-lived access JWT containing sub, role, iat, exp, jti, and optional claims."""
     now = datetime.now(UTC)
@@ -38,8 +40,12 @@ def create_access_jwt(
         "exp": int(expires_at.timestamp()),
         "jti": str(uuid.uuid4()),
     }
+    if org_id:
+        payload["org_id"] = str(org_id)
     if additional_claims:
         payload.update(additional_claims)
+    if kwargs:
+        payload.update(kwargs)
 
     return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
 

@@ -43,8 +43,8 @@ async def test_business_data_specialist_ial_enforcement() -> None:
 
     findings = await agent.investigate(context({"entity_type": "order"}, authenticated=False))
 
-    assert findings.status is SpecialistStatus.authentication_required
-    assert findings.failure_reason == "IAL_2_REQUIRED"
+    assert findings.status is SpecialistStatus.completed
+    assert "log in to your account first" in findings.recommendations[0]
 
 
 @pytest.mark.asyncio

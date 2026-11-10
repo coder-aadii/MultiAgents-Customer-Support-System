@@ -117,7 +117,19 @@ class BusinessDataSpecialistAgent(SpecialistAgent):
                     )
                 else:
                     recommendations.append(f"You are logged in with Customer ID: {cid}.")
-            else:
+        if any(r.entity_type == "customer" for r in records):
+            pass
+        elif not entity_id and len(records) > 1:
+            order_items = []
+            for record in records:
+                status = record.summary_fields.get("status") if isinstance(record.summary_fields, dict) else None
+                if status:
+                    order_items.append(f"Order #{record.entity_id[:8]} is currently {status}.")
+                else:
+                    order_items.append(f"Retrieved {record.title}.")
+            recommendations.append(f"Here are your orders on file: {' '.join(order_items)}")
+        else:
+            for record in records:
                 status = record.summary_fields.get("status") if isinstance(record.summary_fields, dict) else None
                 if status:
                     recommendations.append(f"Order #{record.entity_id[:8]} is currently {status}.")

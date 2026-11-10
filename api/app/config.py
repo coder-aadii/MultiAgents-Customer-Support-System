@@ -93,7 +93,17 @@ class Settings(BaseSettings):
     )
     MCSS_REFLECTION_MAX_REVISIONS: int = Field(default=1, ge=0, le=1)
     MCSS_REFLECTION_MAX_SUPPLEMENTAL_INVESTIGATIONS: int = Field(default=1, ge=0, le=1)
-    MCSS_REFLECTION_TIMEOUT_SECONDS: float = Field(default=15.0, gt=0.0, le=60.0)
+    MCSS_REFLECTION_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0.0, le=120.0)
+    MCSS_REFLECTION_MODEL: str | None = Field(
+        default=None,
+        description="Optional dedicated LLM model for resolution reflection critic",
+    )
+    MCSS_REFLECTION_MAX_INPUT_TOKENS: int = Field(
+        default=3500,
+        gt=0,
+        le=8000,
+        description="Maximum estimated token budget for reflection critic input",
+    )
 
     # CORS
     MCSS_CORS_ORIGINS: str = Field(

@@ -29,7 +29,7 @@ class AgentBudgetExceededError(RuntimeError):
 class AgentBudget:
     max_execution_tokens: int = 8192
     max_tool_calls: int = 3
-    max_timeout_seconds: float = 15.0
+    max_timeout_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         if self.max_execution_tokens < 1:

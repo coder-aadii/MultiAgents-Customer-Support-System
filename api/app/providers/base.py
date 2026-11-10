@@ -22,6 +22,7 @@ class LLMRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     messages: list[LLMMessage]
+    model: str | None = None
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     max_tokens: int = Field(default=512, ge=1, le=4096)
     response_format: dict[str, Any] | None = None

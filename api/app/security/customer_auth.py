@@ -46,6 +46,7 @@ class VerifiedCustomerIdentity(BaseModel):
     token_hash: str = Field(description="SHA-256 digest of verified token")
     expires_at: datetime = Field(description="Token expiration timestamp")
     issued_at: datetime = Field(description="Token issuance timestamp")
+    organization_id: str | None = Field(default=None, description="Optional tenant organization ID claim")
 
     model_config = ConfigDict(frozen=True)
 
@@ -189,6 +190,9 @@ class CustomerTokenVerifier:
             else datetime.now(UTC)
         )
 
+        org_claim = payload.get("org_id") or payload.get("organization_id")
+        org_id_str = str(org_claim).strip() if org_claim is not None else None
+
         return VerifiedCustomerIdentity(
             customer_id=sub.strip(),
             email=email.strip() if email else None,
@@ -198,6 +202,7 @@ class CustomerTokenVerifier:
             token_hash=self._hash_token(token_stripped),
             expires_at=expires_at,
             issued_at=issued_at,
+            organization_id=org_id_str,
         )
 
 

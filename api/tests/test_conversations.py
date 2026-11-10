@@ -617,3 +617,85 @@ async def test_polling_no_broker_endpoints():
 
         res_sub = await client.get("/api/v1/subscribe")
         assert res_sub.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_customer_history_same_email_multiple_sessions(setup_conversation_env):
+    """Conversations created in different sessions by the same customer email correlate in customer history."""
+    env = setup_conversation_env
+    staff_token = env["staff_token"]
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        test_email = f"cust_{uuid.uuid4().hex[:8]}@olist-store.com"
+        # Create first session for test_email
+        sess_1 = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+            json={"name": "Cust 3CE", "email": test_email},
+        )
+        assert sess_1.status_code == 200
+        conv_1_id = sess_1.json()["conversation_id"]
+
+        # Post a message in conv 1
+        await client.post(
+            "/api/v1/widget/messages",
+            headers={"Authorization": f"Bearer {sess_1.json()['session_token']}"},
+            json={"content": "First inquiry", "client_message_id": str(uuid.uuid4())},
+        )
+
+        # Create second session for SAME customer email (simulating new tab / fresh session)
+        sess_2 = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+            json={"name": "Cust 3CE", "email": test_email},
+        )
+        assert sess_2.status_code == 200
+        conv_2_id = sess_2.json()["conversation_id"]
+        assert conv_2_id != conv_1_id
+
+        # Query customer history for conversation 2 as staff
+        hist_resp = await client.get(
+            f"/api/v1/conversations/{conv_2_id}/customer-history",
+            headers={"Authorization": f"Bearer {staff_token}"},
+        )
+        assert hist_resp.status_code == 200
+        data = hist_resp.json()
+        assert len(data["past_conversations"]) == 1
+        assert data["past_conversations"][0]["id"] == conv_1_id
+
+
+@pytest.mark.asyncio
+async def test_customer_history_whitespace_email_no_correlation(setup_conversation_env):
+    """Whitespace email records must not correlate unrelated anonymous visitor conversations."""
+    env = setup_conversation_env
+    staff_token = env["staff_token"]
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Create session 1 with whitespace-only email
+        sess_1 = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+            json={"name": "Anon 1", "email": "   "},
+        )
+        assert sess_1.status_code == 200
+        conv_1_id = sess_1.json()["conversation_id"]
+
+        # Create session 2 with different whitespace-only email
+        sess_2 = await client.post(
+            "/api/v1/widget/sessions",
+            headers={"Origin": "http://localhost:5174"},
+            json={"name": "Anon 2", "email": " \t "},
+        )
+        assert sess_2.status_code == 200
+        conv_2_id = sess_2.json()["conversation_id"]
+
+        # Query history for session 2 - must not contain session 1
+        hist_resp = await client.get(
+            f"/api/v1/conversations/{conv_2_id}/customer-history",
+            headers={"Authorization": f"Bearer {staff_token}"},
+        )
+        assert hist_resp.status_code == 200
+        data = hist_resp.json()
+        assert all(c["id"] != conv_1_id for c in data["past_conversations"])

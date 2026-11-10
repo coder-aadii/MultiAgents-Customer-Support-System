@@ -16,6 +16,7 @@ from app.models.handoff import Handoff, HandoffStatus
 from app.models.message import Message, SenderType
 from app.models.user import User
 from app.models.visitor import Visitor
+from app.models.visitor_session import VisitorSession
 from app.schemas.common import PaginatedResponse
 from app.schemas.conversation import (
     ConversationDetailResponse,
@@ -158,11 +159,30 @@ async def get_customer_history(
 
     vis = (await db.execute(select(Visitor).where(Visitor.id == conv.visitor_id))).scalar_one_or_none()
 
+    sess_stmt = select(VisitorSession).where(VisitorSession.conversation_id == conv.id)
+    sess_stmt = TenantQueryScoper.apply_scope(sess_stmt, VisitorSession)
+    sess = (await db.execute(sess_stmt)).scalars().first()
+
+    customer_predicates = [Conversation.visitor_id == conv.visitor_id]
+    if vis and vis.email and vis.email.strip():
+        clean_email = vis.email.strip()
+        same_email_subq = select(Visitor.id).where(
+            Visitor.email == clean_email,
+            Visitor.organization_id == conv.organization_id,
+        )
+        customer_predicates.append(Conversation.visitor_id.in_(same_email_subq))
+    if sess and sess.verified_customer_id:
+        same_customer_subq = select(VisitorSession.conversation_id).where(
+            VisitorSession.verified_customer_id == sess.verified_customer_id,
+            VisitorSession.organization_id == conv.organization_id,
+        )
+        customer_predicates.append(Conversation.id.in_(same_customer_subq))
+
     past_stmt = (
         select(Conversation)
         .options(selectinload(Conversation.assignee))
         .where(
-            Conversation.visitor_id == conv.visitor_id,
+            or_(*customer_predicates),
             Conversation.id != conv.id,
         )
         .order_by(desc(Conversation.created_at))

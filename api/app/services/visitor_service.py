@@ -68,8 +68,10 @@ async def create_or_resume_session(
     - Revocation on account-switching or when customer credentials drop.
     - Zero leakage of raw customer JWTs.
     """
-    # 1. Query widget settings for allowed origin
-    settings_stmt = select(WidgetSettings).limit(1)
+    org_id = TenantContext.get_tenant_id()
+
+    # 1. Query widget settings for allowed origin scoped to active tenant
+    settings_stmt = select(WidgetSettings).where(WidgetSettings.organization_id == org_id).limit(1)
     result = await db.execute(settings_stmt)
     widget_setting = result.scalar_one_or_none()
     configured_origin = (
@@ -88,6 +90,16 @@ async def create_or_resume_session(
         try:
             verifier = CustomerTokenVerifier()
             verified_identity = verifier.verify_token(customer_token)
+            # Cross-tenant customer isolation: ensure token is not for a foreign tenant
+            if verified_identity and verified_identity.organization_id:
+                if verified_identity.organization_id != str(org_id):
+                    logger.warning(
+                        "customer_token_tenant_mismatch",
+                        token_org_id=verified_identity.organization_id,
+                        session_org_id=str(org_id),
+                        request_id=request_id,
+                    )
+                    verified_identity = None
         except CustomerAuthError as exc:
             # Safe logging: log reason/type, NEVER log raw token
             logger.warning(
@@ -104,6 +116,7 @@ async def create_or_resume_session(
             select(VisitorSession)
             .where(
                 VisitorSession.token_hash == token_hash,
+                VisitorSession.organization_id == org_id,
                 VisitorSession.revoked_at.is_(None),
                 VisitorSession.expires_at > now,
             )
@@ -248,8 +261,6 @@ async def create_or_resume_session(
     visitor_email = email
     if not visitor_email and verified_identity and verified_identity.email:
         visitor_email = verified_identity.email
-
-    org_id = TenantContext.get_tenant_id()
 
     visitor = Visitor(
         organization_id=org_id,
