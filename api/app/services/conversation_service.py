@@ -53,7 +53,8 @@ async def record_audit(
 
 def _escape_like_pattern(text: str) -> str:
     """Escape SQL LIKE/ILIKE wildcards so user input is treated as literal text."""
-    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    clean = text.replace("\x00", "")
+    escaped = clean.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
 

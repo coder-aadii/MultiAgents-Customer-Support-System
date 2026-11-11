@@ -162,6 +162,7 @@ async def setup_phase_3_env():
 
         # Messages in Sarah's Old conversation
         m_old_1 = Message(
+            organization_id=org_a.id,
             conversation_id=conv_sarah_old.id,
             client_message_id=uuid.uuid4(),
             sender_type=SenderType.visitor,
@@ -169,6 +170,7 @@ async def setup_phase_3_env():
             created_at=now - timedelta(days=3),
         )
         m_old_2 = Message(
+            organization_id=org_a.id,
             conversation_id=conv_sarah_old.id,
             client_message_id=uuid.uuid4(),
             sender_type=SenderType.staff,
@@ -179,6 +181,7 @@ async def setup_phase_3_env():
 
         # Messages in Sarah's Current conversation
         m_curr_1 = Message(
+            organization_id=org_a.id,
             conversation_id=conv_sarah_current.id,
             client_message_id=uuid.uuid4(),
             sender_type=SenderType.visitor,
@@ -188,6 +191,7 @@ async def setup_phase_3_env():
 
         # Message in John's conversation
         m_john = Message(
+            organization_id=org_a.id,
             conversation_id=conv_john.id,
             client_message_id=uuid.uuid4(),
             sender_type=SenderType.visitor,

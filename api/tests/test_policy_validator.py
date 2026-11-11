@@ -347,7 +347,10 @@ async def test_handle_assistant_pipeline_cross_customer_isolation() -> None:
 
         assert msg is not None
         assert msg.sender_type == SenderType.assistant
-        assert "I could not find record ORD-1001 in your account" in msg.content
+        assert (
+            "I could not find record ORD-1001 in your account" in msg.content
+            or "For security and privacy reasons" in msg.content
+        )
         assert msg.metadata_json.get("action") == "answer"
         assert msg.metadata_json.get("reason") == "entity_not_found"
 

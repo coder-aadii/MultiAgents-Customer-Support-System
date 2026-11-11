@@ -102,4 +102,31 @@ test.describe("Sub-phase 2.3: Admin Auth and Shell", () => {
     await page.goto("/inbox");
     await expect(page).toHaveURL(/\/login/);
   });
+
+  test("admin can view and update widget settings and inspect security audit journal", async ({ page }) => {
+    await page.goto("/login");
+    await page.fill("#email", "admin@example.com");
+    await page.fill("#password", "Asdf@1234");
+    await page.click("button[type='submit']");
+    await expect(page).toHaveURL(/\/inbox/);
+
+    // 1. View and update widget settings
+    await page.goto("/settings/widget");
+    await expect(page).toHaveURL(/\/settings\/widget/);
+    await expect(page.locator("h1")).toContainText("Settings");
+    await expect(page.locator("#allowedOrigin")).toBeVisible();
+    await expect(page.locator("#welcomeMessage")).toBeVisible();
+    await expect(page.locator("#accentColor")).toBeVisible();
+
+    await page.fill("#welcomeMessage", "Updated MCSS Test Support Message");
+    await page.click("button:has-text('Save Settings')");
+    await expect(page.locator("text=Settings updated successfully")).toBeVisible();
+
+    // 2. View audit log journal
+    await page.goto("/audit");
+    await expect(page).toHaveURL(/\/audit/);
+    await expect(page.locator("h1")).toContainText("Audit Log");
+    await expect(page.locator("table")).toBeVisible();
+    await expect(page.locator("th:has-text('Event Type')")).toBeVisible();
+  });
 });

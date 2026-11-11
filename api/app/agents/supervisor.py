@@ -35,6 +35,8 @@ _IDENTITY_PATTERN = re.compile(
 def is_identity_query(text: str) -> bool:
     if not text:
         return False
+    if re.search(r"\b(?:change|update|edit|modify|reset|cancel|delete|remove)\b", text, re.I):
+        return False
     return bool(_IDENTITY_PATTERN.search(text))
 
 

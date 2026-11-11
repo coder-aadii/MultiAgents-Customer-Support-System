@@ -543,3 +543,74 @@ export const operationsApi = {
     return res.data;
   },
 };
+
+export interface WidgetSettings {
+  id: string;
+  allowed_origin: string;
+  welcome_message: string;
+  accent_color: string;
+  updated_at: string;
+}
+
+export interface WidgetSettingsUpdate {
+  allowed_origin?: string;
+  welcome_message?: string;
+  accent_color?: string;
+}
+
+export interface OrganizationProfile {
+  id: string;
+  slug: string;
+  name: string;
+  is_active: boolean;
+  sso_config_json?: Record<string, unknown> | null;
+  settings_json?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrganizationUpdate {
+  name?: string;
+  settings?: Record<string, unknown>;
+}
+
+export interface AuditEventItem {
+  id: string;
+  actor_type: "user" | "visitor" | "system";
+  actor_id?: string | null;
+  event_type: string;
+  resource_type: string;
+  resource_id?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function getWidgetSettings(): Promise<WidgetSettings> {
+  const { data } = await apiClient.get<WidgetSettings>("/settings/widget");
+  return data;
+}
+
+export async function updateWidgetSettings(payload: WidgetSettingsUpdate): Promise<WidgetSettings> {
+  const { data } = await apiClient.patch<WidgetSettings>("/settings/widget", payload);
+  return data;
+}
+
+export async function getCurrentOrganization(): Promise<OrganizationProfile> {
+  const { data } = await apiClient.get<OrganizationProfile>("/admin/organizations/current");
+  return data;
+}
+
+export async function updateCurrentOrganization(payload: OrganizationUpdate): Promise<OrganizationProfile> {
+  const { data } = await apiClient.patch<OrganizationProfile>("/admin/organizations/current", payload);
+  return data;
+}
+
+export async function getAuditEvents(params?: {
+  event_type?: string;
+  resource_type?: string;
+  cursor?: string;
+  limit?: number;
+}): Promise<PaginatedResponse<AuditEventItem>> {
+  const { data } = await apiClient.get<PaginatedResponse<AuditEventItem>>("/audit/events", { params });
+  return data;
+}

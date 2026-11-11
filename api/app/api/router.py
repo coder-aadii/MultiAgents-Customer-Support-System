@@ -3,11 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes.actions import actions_router
+from app.api.routes.audit import audit_router
 from app.api.routes.auth import auth_router
 from app.api.routes.conversations import conversations_router
 from app.api.routes.handoffs import handoffs_router
 from app.api.routes.knowledge import knowledge_router
 from app.api.routes.organizations import orgs_router
+from app.api.routes.settings import settings_router
 from app.api.routes.sso import sso_router
 from app.api.routes.store_auth import store_auth_router
 from app.api.routes.widget import widget_router
@@ -23,6 +25,8 @@ api_v1_router.include_router(handoffs_router)
 api_v1_router.include_router(knowledge_router)
 api_v1_router.include_router(store_auth_router)
 api_v1_router.include_router(actions_router)
+api_v1_router.include_router(settings_router)
+api_v1_router.include_router(audit_router)
 api_v1_router.include_router(orgs_router)
 api_v1_router.include_router(sso_router)
 api_v1_router.include_router(channels_router)

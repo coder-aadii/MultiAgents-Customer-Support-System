@@ -20,6 +20,7 @@ from app.services.assistant_service import (
     handle_assistant_pipeline,
 )
 from app.services.multi_agent_service import handle_multi_agent_pipeline
+from app.tenancy.context import TenantContext
 
 if TYPE_CHECKING:
     pass
@@ -39,6 +40,7 @@ async def enqueue_job(
     db: AsyncSession,
     conversation_id: uuid.UUID,
     message_id: uuid.UUID,
+    organization_id: uuid.UUID | None = None,
 ) -> AssistantJob:
     """Idempotently enqueues an assistant job for a visitor message."""
     # Check if job already exists for this message
@@ -48,7 +50,15 @@ async def enqueue_job(
     if existing:
         return existing
 
+    if organization_id is None:
+        conv = await db.get(Conversation, conversation_id)
+        if conv is not None:
+            organization_id = conv.organization_id
+        else:
+            organization_id = TenantContext.get_tenant_id()
+
     job = AssistantJob(
+        organization_id=organization_id,
         conversation_id=conversation_id,
         message_id=message_id,
         status=AssistantJobStatus.queued.value,
@@ -186,12 +196,14 @@ async def process_claimed_job(
             return True
 
         conversation_id = job.conversation_id
+        org_id = job.organization_id
         visitor_content = msg.content
         await db.commit()
 
     # Step 2: Generation Execution (Row locks are released during LLM / connector calls)
     execution_error: Exception | None = None
     result_message: Message | None = None
+    tenant_tokens = TenantContext.set_tenant(org_id)
 
     try:
         async with db_factory() as db:
@@ -216,6 +228,8 @@ async def process_claimed_job(
             exc_info=True,
         )
         execution_error = exc
+    finally:
+        TenantContext.reset(tenant_tokens)
 
     # Step 3: Transactional Outcome Gate
     async with db_factory() as db:

@@ -31,9 +31,19 @@ def require_org_role(*allowed_roles: OrgMemberRole) -> Callable:
     ) -> OrganizationMembership:
         membership = await OrgService.get_membership(db, org.id, current_user.id)
         if not membership:
+            if current_user.role == UserRole.admin:
+                return OrganizationMembership(
+                    organization_id=org.id,
+                    user_id=current_user.id,
+                    role=OrgMemberRole.owner.value,
+                    permissions=["*"],
+                )
             raise ForbiddenError(f"User is not a member of organization '{org.slug}'")
 
-        user_level = ROLE_HIERARCHY.get(membership.role, 0)
+        if current_user.role == UserRole.admin:
+            user_level = ROLE_HIERARCHY.get(OrgMemberRole.owner.value, 4)
+        else:
+            user_level = ROLE_HIERARCHY.get(membership.role, 0)
         min_level = min(ROLE_HIERARCHY.get(r.value, 1) for r in allowed_roles)
 
         if user_level < min_level:
