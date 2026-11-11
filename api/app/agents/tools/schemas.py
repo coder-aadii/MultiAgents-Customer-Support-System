@@ -78,13 +78,56 @@ READ_ONLY_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
-def as_openai_tools(tool_names: set[str]) -> list[dict[str, Any]]:
-    """Render only server-registered capabilities into OpenAI function-tool format."""
+class DynamicToolSchemaCompiler:
+    """Generates read-only tool schemas dynamically from connector capability definitions or tenant entity schemas."""
+
+    @classmethod
+    def compile_for_entity(cls, entity_name: str, identifier_pattern: str | None = None, description: str = "") -> dict[str, dict[str, Any]]:
+        clean_name = entity_name.strip().lower()
+        pattern = identifier_pattern or r"^[0-9A-Za-z_-]{2,64}$"
+        return {
+            f"get_{clean_name}_summary": {
+                "description": description or f"Get one verified customer's {clean_name} by ID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "string", "pattern": pattern}
+                    },
+                    "required": ["entity_id"],
+                    "additionalProperties": False,
+                },
+            },
+            f"list_customer_{clean_name}s": {
+                "description": f"List {clean_name}s belonging to the verified customer.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            },
+        }
+
+    @classmethod
+    def compile_all(cls, entities: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+        schemas = dict(READ_ONLY_TOOL_SCHEMAS)
+        if entities:
+            for ent in entities:
+                name = ent.get("name")
+                if name:
+                    schemas.update(cls.compile_for_entity(
+                        name,
+                        identifier_pattern=ent.get("identifier_pattern"),
+                        description=ent.get("description", ""),
+                    ))
+        return schemas
+
+
+def as_openai_tools(tool_names: set[str], extra_schemas: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Render server-registered capabilities into OpenAI function-tool format."""
+    available = dict(READ_ONLY_TOOL_SCHEMAS)
+    if extra_schemas:
+        available.update(extra_schemas)
     return [
         {
             "type": "function",
-            "function": {"name": name, **READ_ONLY_TOOL_SCHEMAS[name]},
+            "function": {"name": name, **available[name]},
         }
         for name in sorted(tool_names)
-        if name in READ_ONLY_TOOL_SCHEMAS
+        if name in available
     ]

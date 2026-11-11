@@ -68,6 +68,7 @@ class ConnectorRegistry:
                     base_url=cd.base_url,
                     auth_type=cd.auth_type,
                     secret_reference=cd.secret_reference,
+                    operations_config=cd.config_json.get("operations") if isinstance(cd.config_json, dict) else None,
                 )
                 self.register(connector)
                 count += 1

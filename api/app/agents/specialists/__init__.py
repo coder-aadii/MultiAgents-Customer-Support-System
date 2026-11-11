@@ -10,6 +10,7 @@ from app.agents.specialists.knowledge_agent import KnowledgeSpecialistAgent
 from app.agents.specialists.logistics_agent import LogisticsSpecialistAgent
 from app.agents.specialists.resolution_agent import ResolutionSynthesisAgent
 from app.agents.specialists.schemas import SpecialistFindings, SpecialistStatus
+from app.agents.specialists.universal_agent import UniversalEntitySpecialistAgent
 
 SPECIALIST_AGENT_CLASSES: tuple[type, ...] = (
     KnowledgeSpecialistAgent,
@@ -18,6 +19,7 @@ SPECIALIST_AGENT_CLASSES: tuple[type, ...] = (
     BillingSpecialistAgent,
     ActionProposalSpecialistAgent,
     ResolutionSynthesisAgent,
+    UniversalEntitySpecialistAgent,
 )
 
 
@@ -39,5 +41,6 @@ __all__ = [
     "ResolutionSynthesisAgent",
     "SpecialistFindings",
     "SpecialistStatus",
+    "UniversalEntitySpecialistAgent",
     "register_specialists",
 ]

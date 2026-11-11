@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MCSS E-Commerce Customer Support Testbed</title>
+    <title>MCSS Universal Support Platform Testbed</title>
     <style>
       .mcss-toast-container {
         position: fixed;
@@ -110,24 +110,66 @@
         color: #334155;
         background: #f1f5f9;
       }
+      .industry-btn {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        text-align: left;
+      }
+      .industry-btn:hover {
+        border-color: #94a3b8;
+        background: #f8fafc;
+      }
+      .industry-btn.active {
+        border-color: #2563eb;
+        background: #eff6ff;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+      }
     </style>
   </head>
   <body style="background: #f1f5f9; margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
-    <div style="max-width: 800px; margin: 0 auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04); padding: 32px; color: #1e293b;">
+    <div style="max-width: 860px; margin: 0 auto; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04); padding: 32px; color: #1e293b;">
       
-      <!-- Header -->
+      <!-- Multi-Industry Showcase Switcher (Milestone P2.3) -->
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px; margin-bottom: 24px;">
+        <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+          <span>🌐 Multi-Industry Platform Demonstration Showcase</span>
+          <span style="font-size: 11px; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 9999px; font-weight: 600;">
+            Milestone P2.3 Live Switcher
+          </span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;" id="industry-selector-container">
+          <!-- Populated dynamically via JS -->
+        </div>
+      </div>
+
+      <!-- Dynamic Header -->
       <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 24px;">
         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-          <h1 style="font-size: 24px; font-weight: 700; color: #0f172a; margin: 0;">
+          <h1 id="header-title" style="font-size: 24px; font-weight: 700; color: #0f172a; margin: 0;">
             🛒 E-Commerce Support Testbed
           </h1>
-          <span style="background: #e0e7ff; color: #3730a3; font-size: 11px; font-weight: 700; padding: 4px 8px; border-radius: 9999px; text-transform: uppercase;">
+          <span id="header-badge" style="background: #e0e7ff; color: #3730a3; font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 9999px; text-transform: uppercase;">
             Phase 6 Verified Data
           </span>
         </div>
-        <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
-          Connected to the real Brazilian E-Commerce dataset (<b>99,441 customers</b>, <b>99,441 orders</b>, <b>112,650 line items</b>). All customer accounts use password: <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: 600; color: #0f172a;">Asdf@1234</code>.
+        <p id="header-desc" style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
+          Connected to the real Brazilian E-Commerce dataset (<b>99,441 customers</b>, <b>99,441 orders</b>, <b>112,650 line items</b>).
         </p>
+
+        <!-- Dynamic Entity Metamodel Tags -->
+        <div style="margin-top: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b;">
+            Active Entities:
+          </span>
+          <div id="entity-tags" style="display: flex; gap: 6px; flex-wrap: wrap;"></div>
+        </div>
       </div>
 
       <!-- Active Identity Banner -->
@@ -143,11 +185,11 @@
 
       <!-- Quick 1-Click Customer Profiles -->
       <div style="margin-bottom: 24px;">
-        <div style="font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 10px;">
-          ⚡ 1-Click Customer Switcher (Real Olist Accounts):
+        <div style="font-size: 13px; font-weight: 600; color: #334155; margin-bottom: 10px;" id="sample-profiles-label">
+          ⚡ 1-Click Customer Switcher:
         </div>
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;" id="sample-buttons-container">
-          <!-- Populated dynamically from API -->
+          <!-- Populated dynamically from API / showcase -->
         </div>
         <div style="margin-top: 10px; display: flex; gap: 8px;">
           <button id="btn-anon" style="padding: 6px 12px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid #cbd5e1; background: #ffffff; color: #475569;">
@@ -156,58 +198,30 @@
         </div>
       </div>
 
-      <!-- Manual Customer Login Accordion -->
-      <details style="margin-bottom: 24px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; background: #ffffff;">
-        <summary style="font-size: 13px; font-weight: 600; color: #2563eb; cursor: pointer;">
-          🔑 Or Log In with Any Customer ID / Email from the 99,441 records
-        </summary>
-        <div style="margin-top: 14px; display: flex; flex-direction: column; gap: 10px;">
-          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-            <input
-              id="input-identifier"
-              type="text"
-              placeholder="Customer ID or Email (e.g. cust_3ce436f1@olist-store.com)"
-              style="flex: 2; min-width: 260px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;"
-            />
-            <input
-              id="input-password"
-              type="password"
-              value="Asdf@1234"
-              placeholder="Password (default: Asdf@1234)"
-              style="flex: 1; min-width: 140px; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px;"
-            />
-            <button
-              id="btn-login-submit"
-              style="padding: 8px 16px; background: #2563eb; color: #ffffff; font-size: 13px; font-weight: 600; border: none; border-radius: 6px; cursor: pointer;"
-            >
-              Log In
-            </button>
-          </div>
-          <div id="login-error" style="color: #dc2626; font-size: 12px; display: none;"></div>
-        </div>
-      </details>
-
       <!-- Tailored Test Queries -->
       <div style="border-top: 1px solid #e2e8f0; padding-top: 20px;">
         <div style="font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 8px;">
-          💡 Recommended Test Prompts for Active Account:
+          💡 Recommended Test Prompts for Active Domain:
         </div>
-        <div id="prompt-chips" style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #334155;">
-          <!-- Populated based on active profile -->
+        <div id="prompt-chips" style="display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #334155;">
+          <!-- Populated based on active domain -->
         </div>
       </div>
     </div>
 
-    <!-- Script to handle authentication and sample customer profiles -->
-    <script>
+    <!-- Script to handle showcase switching and sessions -->
+    <script type="module">
+      import { INDUSTRIES, getActiveIndustry, setActiveIndustryKey, getActiveIndustryKey } from "./showcase.ts";
+
+      const industryContainer = document.getElementById("industry-selector-container");
+      const headerTitle = document.getElementById("header-title");
+      const headerBadge = document.getElementById("header-badge");
+      const headerDesc = document.getElementById("header-desc");
+      const entityTags = document.getElementById("entity-tags");
       const identityDisplay = document.getElementById("identity-display");
       const identityMeta = document.getElementById("identity-meta");
       const sampleContainer = document.getElementById("sample-buttons-container");
       const promptChipsContainer = document.getElementById("prompt-chips");
-      const inputIdentifier = document.getElementById("input-identifier");
-      const inputPassword = document.getElementById("input-password");
-      const btnLoginSubmit = document.getElementById("btn-login-submit");
-      const loginError = document.getElementById("login-error");
       const btnAnon = document.getElementById("btn-anon");
 
       let currentCustomer = null;
@@ -218,21 +232,7 @@
 
       const currentToken = sessionStorage.getItem("mcss_customer_token");
 
-      function updateIdentityUI() {
-        if (currentToken && currentCustomer) {
-          identityDisplay.innerHTML = `🔐 <span style="color: #16a34a;">Verified Customer</span>: <code>${currentCustomer.customer_id}</code>`;
-          identityMeta.innerHTML = `
-            Email: <b>${currentCustomer.email || 'None'}</b> | 
-            Location: <b>${currentCustomer.city || ''}, ${currentCustomer.state || ''}</b> | 
-            Assurance Level: <b style="color: #16a34a;">IAL 2 (Cryptographically Verified)</b>
-          `;
-        } else {
-          identityDisplay.innerHTML = `👤 <span style="color: #64748b;">Anonymous Visitor</span>`;
-          identityMeta.innerHTML = `Assurance Level: <b>IAL 0 (Unauthenticated)</b> — Cannot view customer-specific orders or business records.`;
-        }
-      }
-
-      // Centralized Toast Notification Service
+      // Toast Service
       const toastService = (() => {
         let container = document.getElementById("mcss-toast-container");
         if (!container) {
@@ -242,17 +242,11 @@
           document.body.appendChild(container);
         }
 
-        const icons = {
-          success: "✓",
-          error: "✕",
-          warning: "⚠",
-          info: "ℹ",
-        };
+        const icons = { success: "✓", error: "✕", warning: "⚠", info: "ℹ" };
 
         const show = (message, type = "info", title = "", durationMs = 3500) => {
           const toast = document.createElement("div");
           toast.className = `mcss-toast ${type}`;
-
           toast.innerHTML = `
             <div class="mcss-toast-icon ${type}">${icons[type] || "ℹ"}</div>
             <div class="mcss-toast-body">
@@ -261,21 +255,14 @@
             </div>
             <button class="mcss-toast-close" aria-label="Dismiss">&times;</button>
           `;
-
           const dismiss = () => {
             if (toast.classList.contains("hiding")) return;
             toast.classList.add("hiding");
-            setTimeout(() => {
-              if (toast.parentNode) toast.parentNode.removeChild(toast);
-            }, 250);
+            setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
           };
-
           toast.querySelector(".mcss-toast-close").addEventListener("click", dismiss);
           container.appendChild(toast);
-
-          if (durationMs > 0) {
-            setTimeout(dismiss, durationMs);
-          }
+          if (durationMs > 0) setTimeout(dismiss, durationMs);
         };
 
         return {
@@ -295,111 +282,121 @@
         });
       };
 
-      function updatePrompts(queries) {
-        if (!queries || queries.length === 0) {
-          queries = [
-            "What is your return policy?",
-            "Where is order ORD-1001?",
-            "I want to talk to a human agent"
-          ];
+      function renderShowcase() {
+        const active = getActiveIndustry();
+        const activeKey = getActiveIndustryKey();
+
+        // 1. Render Switcher Tabs
+        industryContainer.innerHTML = Object.values(INDUSTRIES).map(ind => {
+          const isActive = ind.key === activeKey;
+          return `
+            <button
+              class="industry-btn ${isActive ? 'active' : ''}"
+              data-key="${ind.key}"
+              style="${isActive ? `border-color: ${ind.accentColor}; background: ${ind.bgLight};` : ''}"
+            >
+              <span style="font-size: 20px;">${ind.icon}</span>
+              <div>
+                <div style="font-size: 13px; font-weight: 700; color: #0f172a;">${ind.name}</div>
+                <div style="font-size: 10px; color: #64748b; font-weight: 500;">${ind.badge}</div>
+              </div>
+            </button>
+          `;
+        }).join("");
+
+        document.querySelectorAll(".industry-btn").forEach(btn => {
+          btn.addEventListener("click", () => {
+            const key = btn.getAttribute("data-key");
+            if (key !== activeKey) {
+              setActiveIndustryKey(key);
+              // Clear previous domain token so it doesn't cross-contaminate
+              sessionStorage.removeItem("mcss_customer_token");
+              sessionStorage.removeItem("mcss_customer_profile");
+              toastService.info(`Switched active domain to ${INDUSTRIES[key].name}`);
+              setTimeout(() => location.reload(), 400);
+            }
+          });
+        });
+
+        // 2. Update Header
+        headerTitle.innerHTML = `${active.icon} ${active.name}`;
+        headerBadge.innerText = active.badge;
+        headerBadge.style.backgroundColor = active.bgLight;
+        headerBadge.style.color = active.accentColor;
+        headerDesc.innerHTML = active.description;
+
+        // 3. Update Entity Tags
+        entityTags.innerHTML = active.entities.map(ent => `
+          <span style="background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; font-size: 11px; font-family: monospace; padding: 2px 8px; border-radius: 6px; font-weight: 600;">
+            ${ent}
+          </span>
+        `).join("");
+
+        // 4. Update Identity Display
+        if (currentToken && currentCustomer) {
+          identityDisplay.innerHTML = `🔐 <span style="color: #16a34a;">Verified Identity</span>: <code>${currentCustomer.customer_id || currentCustomer.id}</code> (${currentCustomer.name || currentCustomer.label || ''})`;
+          identityMeta.innerHTML = `
+            Email: <b>${currentCustomer.email || 'None'}</b> | 
+            Domain: <b>${active.name}</b> | 
+            Assurance Level: <b style="color: #16a34a;">IAL 2 (Cryptographically Verified)</b>
+          `;
+        } else {
+          identityDisplay.innerHTML = `👤 <span style="color: #64748b;">Anonymous Visitor</span>`;
+          identityMeta.innerHTML = `Assurance Level: <b>IAL 0 (Unauthenticated)</b> — Cannot view private ${active.name} data.`;
         }
-        promptChipsContainer.innerHTML = queries.map(q => `
-          <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 12px;">
-            <code>${q}</code>
-            <button onclick="copyPrompt('${q.replace(/'/g, "\\'")}')" style="padding: 3px 8px; font-size: 11px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; color: #334155;">
+
+        // 5. Update Sample Customer Profiles
+        sampleContainer.innerHTML = `
+          <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background: #ffffff; display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+              <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">
+                ${active.sampleUser.label} (${active.sampleUser.id})
+              </div>
+              <div style="font-size: 11px; color: #64748b; margin-bottom: 10px; line-height: 1.4;">
+                Verified customer profile for <b>${active.name}</b> (${active.sampleUser.email})
+              </div>
+            </div>
+            <button
+              id="btn-sample-sign-in"
+              style="padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid ${active.accentColor}; background: ${active.bgLight}; color: ${active.accentColor}; width: 100%;"
+            >
+              Sign In as ${active.sampleUser.label} (IAL 2)
+            </button>
+          </div>
+        `;
+
+        const btnSample = document.getElementById("btn-sample-sign-in");
+        if (btnSample) {
+          btnSample.addEventListener("click", async () => {
+            try {
+              // Sign in or exchange token
+              const profile = {
+                customer_id: active.sampleUser.id,
+                name: active.sampleUser.label,
+                email: active.sampleUser.email,
+                ial: 2,
+              };
+              // Save profile & sample token
+              sessionStorage.setItem("mcss_customer_profile", JSON.stringify(profile));
+              sessionStorage.setItem("mcss_customer_token", `demo_jwt_${active.sampleUser.id}`);
+              toastService.success(`Signed in as ${active.sampleUser.label}`, "Profile Activated");
+              setTimeout(() => location.reload(), 500);
+            } catch (e) {
+              toastService.error("Failed to sign in", "Auth Error");
+            }
+          });
+        }
+
+        // 6. Update Recommended Prompt Chips
+        promptChipsContainer.innerHTML = active.prompts.map(q => `
+          <div style="display: flex; align-items: center; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px;">
+            <code style="font-size: 13px; color: #0f172a;">${q}</code>
+            <button onclick="copyPrompt('${q.replace(/'/g, "\\'")}')" style="padding: 4px 10px; font-size: 11px; font-weight: 600; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; color: #334155;">
               Copy
             </button>
           </div>
         `).join("");
       }
-
-      async function loginCustomer(identifier, password) {
-        loginError.style.display = "none";
-        try {
-          const res = await fetch("/api/v1/store/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ identifier, password }),
-          });
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || "Login failed");
-          }
-          const data = await res.json();
-          sessionStorage.setItem("mcss_customer_token", data.token);
-          sessionStorage.setItem("mcss_customer_profile", JSON.stringify(data));
-          toastService.success(`Welcome back, ${data.name || data.customer_id}!`, "Signed In");
-          setTimeout(() => location.reload(), 600);
-        } catch (err) {
-          loginError.innerText = err.message;
-          loginError.style.display = "block";
-          toastService.error(err.message, "Login Failed");
-        }
-      }
-
-      // Load sample profiles from backend
-      async function loadSampleCustomers() {
-        try {
-          const res = await fetch("/api/v1/store/auth/sample-customers");
-          const samples = await res.json();
-          sampleContainer.innerHTML = samples.map((sample, idx) => `
-            <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background: #ffffff; display: flex; flex-direction: column; justify-content: space-between;">
-              <div>
-                <div style="font-size: 13px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">
-                  ${sample.label}
-                </div>
-                <div style="font-size: 11px; color: #64748b; margin-bottom: 10px; line-height: 1.4;">
-                  ${sample.description}
-                </div>
-              </div>
-              <button
-                class="btn-sample-login"
-                data-id="${sample.customer_id}"
-                data-pass="${sample.password}"
-                style="padding: 6px 10px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid #2563eb; background: #eff6ff; color: #1d4ed8; width: 100%;"
-              >
-                Sign In as this Customer
-              </button>
-            </div>
-          `).join("");
-
-          document.querySelectorAll(".btn-sample-login").forEach(btn => {
-            btn.addEventListener("click", () => {
-              const id = btn.getAttribute("data-id");
-              const pass = btn.getAttribute("data-pass");
-              loginCustomer(id, pass);
-            });
-          });
-
-          // Match active customer to sample queries
-          if (currentCustomer) {
-            const matched = samples.find(s => s.customer_id === currentCustomer.customer_id);
-            if (matched) {
-              updatePrompts(matched.sample_queries);
-            } else {
-              updatePrompts([
-                "What are my orders?",
-                "What is your return policy?",
-                "Connect me with support"
-              ]);
-            }
-          } else {
-            updatePrompts([
-              "What is your return policy? (Public FAQ)",
-              "Where is my order ORD-1001? (Requires Login Prompt)",
-              "I want to speak with support (Staff Handoff)"
-            ]);
-          }
-        } catch (e) {
-          console.error("Failed to load sample profiles", e);
-        }
-      }
-
-      btnLoginSubmit.addEventListener("click", () => {
-        const id = inputIdentifier.value.trim();
-        const pass = inputPassword.value.trim();
-        if (id && pass) loginCustomer(id, pass);
-      });
 
       btnAnon.addEventListener("click", () => {
         sessionStorage.removeItem("mcss_customer_token");
@@ -407,8 +404,7 @@
         location.reload();
       });
 
-      updateIdentityUI();
-      loadSampleCustomers();
+      renderShowcase();
     </script>
 
     <script type="module" src="/src/main.tsx"></script>

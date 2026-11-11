@@ -614,3 +614,64 @@ export async function getAuditEvents(params?: {
   const { data } = await apiClient.get<PaginatedResponse<AuditEventItem>>("/audit/events", { params });
   return data;
 }
+
+export interface ConnectorItem {
+  id: string;
+  organization_id: string;
+  name: string;
+  connector_type: "rest" | "sql" | "graphql";
+  is_enabled: boolean;
+  base_url: string | null;
+  config_json: Record<string, any>;
+  auth_type: string;
+  secret_reference: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorTestResult {
+  success: boolean;
+  message: string;
+  latency_ms: number;
+  status_code?: number;
+  error_type?: string;
+}
+
+export async function getConnectors(): Promise<ConnectorItem[]> {
+  const { data } = await apiClient.get<ConnectorItem[]>("/connectors");
+  return data;
+}
+
+export async function createConnector(payload: {
+  name: string;
+  connector_type: string;
+  is_enabled?: boolean;
+  base_url?: string | null;
+  config_json?: Record<string, any>;
+  auth_type?: string;
+  secret_reference?: string;
+}): Promise<ConnectorItem> {
+  const { data } = await apiClient.post<ConnectorItem>("/connectors", payload);
+  return data;
+}
+
+export async function updateConnector(
+  id: string,
+  payload: Partial<ConnectorItem>
+): Promise<ConnectorItem> {
+  const { data } = await apiClient.put<ConnectorItem>(`/connectors/${id}`, payload);
+  return data;
+}
+
+export async function deleteConnector(id: string): Promise<void> {
+  await apiClient.delete(`/connectors/${id}`);
+}
+
+export async function testConnector(payload: {
+  base_url: string;
+  auth_type?: string;
+  secret_reference?: string;
+}): Promise<ConnectorTestResult> {
+  const { data } = await apiClient.post<ConnectorTestResult>("/connectors/test-connection", payload);
+  return data;
+}

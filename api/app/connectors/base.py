@@ -35,6 +35,10 @@ class ConnectorValidationError(EnterpriseConnectorError):
     """Raised when query parameters fail schema validation or contain unsafe payloads."""
 
 
+class SSRFSecurityViolationError(EnterpriseConnectorError):
+    """Raised when an outbound connection attempt targets a forbidden, internal, or private network."""
+
+
 class HealthStatus(BaseModel):
     """Health check diagnostic result for a connector."""
 
@@ -220,6 +224,17 @@ class BaseEnterpriseConnector(abc.ABC):
                 execution_time_ms=elapsed_ms,
             )
 
+        except SSRFSecurityViolationError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="SSRF_VIOLATION",
+                error_message=f"SSRF violation: {e}",
+                execution_time_ms=elapsed_ms,
+            )
+
         except Exception as e:
             elapsed_ms = int((time.perf_counter() - start_time) * 1000)
             return ConnectorResult(
@@ -351,6 +366,17 @@ class BaseEnterpriseConnector(abc.ABC):
                 operation=operation,
                 error_code="VALIDATION_ERROR",
                 error_message=str(e),
+                execution_time_ms=elapsed_ms,
+            )
+
+        except SSRFSecurityViolationError as e:
+            elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+            return ConnectorResult(
+                success=False,
+                connector_name=self.connector_name,
+                operation=operation,
+                error_code="SSRF_VIOLATION",
+                error_message=f"SSRF violation: {e}",
                 execution_time_ms=elapsed_ms,
             )
 

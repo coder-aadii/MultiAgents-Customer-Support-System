@@ -8,6 +8,7 @@ import PendingActions from "./pages/PendingActions";
 import Knowledge from "./pages/Knowledge";
 import Settings from "./pages/Settings";
 import Audit from "./pages/Audit";
+import Connectors from "./pages/Connectors";
 
 export default function App() {
   return (
@@ -89,6 +90,14 @@ export default function App() {
           element={
             <ProtectedRoute adminOnly title="Audit Log">
               <Audit />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/connectors"
+          element={
+            <ProtectedRoute adminOnly title="Data Connectors">
+              <Connectors />
             </ProtectedRoute>
           }
         />

@@ -23,7 +23,7 @@ from app.models import (  # noqa: F401
     WidgetSettings,
 )
 
-EXPECTED_MIGRATION_REVISION = "0018_visitor_search_indices"
+EXPECTED_MIGRATION_REVISION = "0019_organization_entity_schemas"
 
 engine = create_async_engine(
     settings.DATABASE_URL,

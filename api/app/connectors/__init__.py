@@ -17,6 +17,7 @@ from app.connectors.registry import ConnectorRegistry, default_connector_registr
 from app.connectors.resilience import CircuitBreaker, CircuitState, TokenBucketRateLimiter
 from app.connectors.rest import RestEnterpriseConnector
 from app.connectors.sql import SqlEnterpriseConnector
+from app.connectors.ssrf import SSRFProtectionGate, SSRFSecurityViolationError
 
 __all__ = [
     "EnterpriseConnectorGatewayAdapter",
@@ -30,6 +31,8 @@ __all__ = [
     "ConnectorRateLimitError",
     "ConnectorCircuitOpenError",
     "ConnectorValidationError",
+    "SSRFSecurityViolationError",
+    "SSRFProtectionGate",
     "CredentialManager",
     "CircuitBreaker",
     "CircuitState",

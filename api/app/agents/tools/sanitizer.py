@@ -50,9 +50,10 @@ def sanitize_tool_call(
     arguments: dict[str, Any],
     tenant_id: uuid.UUID,
     verified_customer_id: str,
+    custom_schemas: dict[str, dict[str, Any]] | None = None,
 ) -> SanitizedToolCall:
     """Drop spoofed identity claims and validate a fixed parameter whitelist."""
-    specification = READ_ONLY_TOOL_SCHEMAS.get(name)
+    specification = (custom_schemas.get(name) if custom_schemas else None) or READ_ONLY_TOOL_SCHEMAS.get(name)
     if specification is None:
         raise DynamicToolValidationError(f"unknown dynamic tool '{name}'")
     if not isinstance(arguments, dict):
@@ -72,7 +73,16 @@ def sanitize_tool_call(
         if field not in sanitized:
             raise DynamicToolValidationError(f"missing required tool parameter '{field}'")
 
-    for field, pattern in _IDENTIFIER_PATTERNS.get(name, {}).items():
+    patterns = dict(_IDENTIFIER_PATTERNS.get(name, {}))
+    if not patterns and "entity_id" in allowed_fields:
+        pat_str = specification["parameters"]["properties"].get("entity_id", {}).get("pattern")
+        if pat_str:
+            try:
+                patterns["entity_id"] = re.compile(pat_str)
+            except re.error:
+                pass
+
+    for field, pattern in patterns.items():
         value = sanitized.get(field)
         if not isinstance(value, str) or not pattern.fullmatch(value):
             raise DynamicToolValidationError(f"invalid '{field}' format")

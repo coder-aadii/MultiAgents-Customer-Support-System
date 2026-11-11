@@ -70,6 +70,7 @@ export default function Layout() {
     { path: "/actions", label: "Action Queue" },
     { path: "/knowledge", label: t("nav.knowledge") },
     { path: "/settings/widget", label: t("nav.settings"), adminOnly: true },
+    { path: "/connectors", label: "Connectors", adminOnly: true },
     { path: "/audit", label: t("nav.audit"), adminOnly: true },
   ];
 

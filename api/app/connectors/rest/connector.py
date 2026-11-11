@@ -18,6 +18,7 @@ from app.connectors.base import (
 )
 from app.connectors.credentials import CredentialManager
 from app.connectors.resilience import CircuitBreaker, TokenBucketRateLimiter
+from app.connectors.ssrf import SSRFProtectionGate, SSRFSecurityViolationError
 
 logger = structlog.get_logger()
 
@@ -62,6 +63,8 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         circuit_breaker: CircuitBreaker | None = None,
         allowed_fields: set[str] | None = None,
         custom_client: httpx.AsyncClient | None = None,
+        operations_config: dict[str, Any] | None = None,
+        enforce_ssrf: bool = True,
     ) -> None:
         self._name = connector_name
         self.base_url = base_url.rstrip("/")
@@ -72,6 +75,8 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         self.allowed_fields = allowed_fields or DEFAULT_ALLOWED_ORDER_FIELDS
         self._client = custom_client
         self._internal_client: httpx.AsyncClient | None = None
+        self.operations_config = operations_config or {}
+        self.enforce_ssrf = enforce_ssrf
 
     async def _get_client(self, timeout_seconds: float) -> httpx.AsyncClient:
         if self._client:
@@ -93,6 +98,8 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
 
     @property
     def supported_operations(self) -> list[str]:
+        if self.operations_config:
+            return list(self.operations_config.keys())
         return ["get_orders", "get_order_details"]
 
     def _get_auth_headers(self) -> dict[str, str]:
@@ -121,6 +128,16 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         return payload
 
     async def health_check(self) -> HealthStatus:
+        if self.enforce_ssrf:
+            try:
+                SSRFProtectionGate.validate_target_url(self.base_url)
+            except SSRFSecurityViolationError as e:
+                return HealthStatus(
+                    is_healthy=False,
+                    latency_ms=0.0,
+                    details={"error": f"SSRF violation: {e}", "url": self.base_url},
+                )
+
         headers = self._get_auth_headers()
         url = f"{self.base_url}/health"
 
@@ -148,12 +165,43 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         parameters: dict[str, Any],
         timeout_seconds: float,
     ) -> dict[str, Any] | list[dict[str, Any]] | None:
-        # 1. Resilience gates
+        # 1. Resilience & SSRF gates
         await self.rate_limiter.acquire(1)
         await self.circuit_breaker.check_permitted()
 
+        if self.enforce_ssrf:
+            SSRFProtectionGate.validate_target_url(self.base_url)
+
+        headers = self._get_auth_headers()
+        headers["Accept"] = "application/json"
+        method = "GET"
+        body_payload: Any = None
+        op_allowed_fields: set[str] | None = None
+
         # 2. Build target URL with mandatory verified_customer_id scoping
-        if operation == "get_orders":
+        if self.operations_config and operation in self.operations_config:
+            op_conf = self.operations_config[operation]
+            path_tmpl = op_conf.get("path", "")
+            method = op_conf.get("method", "GET").upper()
+            if "allowed_fields" in op_conf:
+                op_allowed_fields = set(op_conf["allowed_fields"])
+
+            # Map parameters and verified_customer_id into path
+            format_dict = {"verified_customer_id": verified_customer_id}
+            for k, v in parameters.items():
+                format_dict[k] = str(v).strip()
+            path = path_tmpl
+            for k, v in format_dict.items():
+                path = path.replace(f"{{{k}}}", v)
+
+            # Customer header injection if configured
+            cust_header = op_conf.get("customer_header")
+            if cust_header:
+                headers[cust_header] = verified_customer_id
+
+            if method in ("POST", "PUT", "PATCH"):
+                body_payload = parameters.get("body", parameters)
+        elif operation == "get_orders":
             path = f"/customers/{verified_customer_id}/orders"
         elif operation == "get_order_details":
             order_id = parameters.get("order_id")
@@ -165,12 +213,17 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
             raise ConnectorValidationError(f"Unsupported operation '{operation}'")
 
         full_url = f"{self.base_url}{path}"
-        headers = self._get_auth_headers()
-        headers["Accept"] = "application/json"
 
         client = await self._get_client(timeout_seconds=timeout_seconds)
         try:
-            res = await client.get(full_url, headers=headers)
+            if method == "GET":
+                res = await client.get(full_url, headers=headers)
+            elif method == "POST":
+                res = await client.post(full_url, headers=headers, json=body_payload)
+            elif method == "PUT":
+                res = await client.put(full_url, headers=headers, json=body_payload)
+            else:
+                res = await client.request(method, full_url, headers=headers, json=body_payload)
         except httpx.TimeoutException as e:
             await self.circuit_breaker.record_failure()
             raise ConnectorTimeoutError(f"HTTP request timed out after {timeout_seconds}s") from e
@@ -202,6 +255,14 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         except Exception as e:
             raise EnterpriseConnectorError(f"Invalid JSON received from upstream: {e}") from e
 
-        filtered = self._filter_allowed_fields(raw_json)
+        if op_allowed_fields is not None:
+            old_allowed = self.allowed_fields
+            try:
+                self.allowed_fields = op_allowed_fields
+                filtered = self._filter_allowed_fields(raw_json)
+            finally:
+                self.allowed_fields = old_allowed
+        else:
+            filtered = self._filter_allowed_fields(raw_json)
         return filtered
 

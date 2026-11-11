@@ -153,16 +153,51 @@ class FakeLLMProvider(LLMProvider):
         elif "sources" in system_text.lower() or "cited_chunk_ids" in system_text.lower():
             content = self._deterministic_answer_generator(system_text, user_text)
         elif "supervisor" in system_text.lower() or "investigation plan" in system_text.lower():
-            content = json.dumps({
-                "user_intents": ["inquiry"],
-                "tasks": [{
-                    "task_id": "primary_investigation",
-                    "assigned_agent": "knowledge_specialist",
-                    "task_description": "Investigate inquiry using knowledge base.",
-                    "required_inputs": {"query": current_user_text},
-                    "dependencies": [],
-                }],
-            })
+            lower_msg = current_user_text.lower()
+            if any(w in lower_msg for w in ("cancel", "stop charging", "close account")):
+                content = json.dumps({"outcome": "handoff", "reason": "account_or_billing_request"})
+            elif "workspace" in lower_msg and ("subscription" in lower_msg or "sub-" in lower_msg):
+                content = json.dumps({
+                    "user_intents": ["inquiry"],
+                    "tasks": [
+                        {
+                            "task_id": "investigate_workspace",
+                            "assigned_agent": "universal_entity_specialist",
+                            "task_description": "Investigate workspace status.",
+                            "required_inputs": {"entity_type": "workspace"},
+                            "dependencies": [],
+                        },
+                        {
+                            "task_id": "investigate_subscription",
+                            "assigned_agent": "universal_entity_specialist",
+                            "task_description": "Investigate subscription status.",
+                            "required_inputs": {"entity_type": "subscription"},
+                            "dependencies": [],
+                        },
+                    ],
+                })
+            elif any(w in lower_msg for w in ("workspace", "ws-", "sub-", "quota-", "api_quota")):
+                content = json.dumps({
+                    "user_intents": ["inquiry"],
+                    "tasks": [{
+                        "task_id": "primary_investigation",
+                        "assigned_agent": "universal_entity_specialist",
+                        "task_description": "Investigate SaaS inquiry.",
+                        "required_inputs": {"query": current_user_text},
+                        "dependencies": [],
+                    }],
+                })
+            else:
+                content = json.dumps({
+                    "user_intents": ["inquiry"],
+                    "tasks": [{
+                        "task_id": "primary_investigation",
+                        "assigned_agent": "knowledge_specialist",
+                        "task_description": "Investigate inquiry using knowledge base.",
+                        "required_inputs": {"query": current_user_text},
+                        "dependencies": [],
+                    }],
+                })
         elif "reflection" in system_text.lower() or "critic" in system_text.lower():
             content = json.dumps({
                 "verdict": "approve",

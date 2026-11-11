@@ -8,12 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.dependencies import require_staff
-from app.models.organization import Organization
-from app.models.user import User
+from app.models.organization import Organization, OrganizationMembership, OrgMemberRole
 from app.models.widget_settings import WidgetSettings
 from app.schemas.settings import WidgetSettingsResponse, WidgetSettingsUpdate
 from app.tenancy.filter import TenantQueryScoper
+from app.tenancy.rbac import require_org_role
 from app.tenancy.resolver import resolve_tenant
 
 settings_router = APIRouter(prefix="/settings", tags=["settings"])
@@ -21,8 +20,15 @@ settings_router = APIRouter(prefix="/settings", tags=["settings"])
 
 @settings_router.get("/widget", response_model=WidgetSettingsResponse)
 async def get_widget_settings(
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(
+        require_org_role(
+            OrgMemberRole.agent,
+            OrgMemberRole.supervisor,
+            OrgMemberRole.admin,
+            OrgMemberRole.owner,
+        )
+    ),
     db: AsyncSession = Depends(get_session),
 ) -> WidgetSettingsResponse:
     """Retrieve the active organization's widget customization and origin settings."""
@@ -51,8 +57,10 @@ async def get_widget_settings(
 @settings_router.patch("/widget", response_model=WidgetSettingsResponse)
 async def update_widget_settings(
     payload: WidgetSettingsUpdate,
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(
+        require_org_role(OrgMemberRole.admin, OrgMemberRole.owner)
+    ),
     db: AsyncSession = Depends(get_session),
 ) -> WidgetSettingsResponse:
     """Update widget accent colors, welcome message, and allowed origins."""

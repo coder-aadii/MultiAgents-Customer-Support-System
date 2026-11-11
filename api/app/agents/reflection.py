@@ -19,7 +19,10 @@ from app.agents.base import AgentContext, AgentResult, BaseAgent
 from app.agents.schemas import AgentExecutionStatus, AgentTokenUsage
 from app.common.redaction import mask_pii, redact_sensitive_data
 from app.config import settings
-from app.prompts.reflection_critic import REFLECTION_CRITIC_SYSTEM_PROMPT
+from app.prompts.reflection_critic import (
+    REFLECTION_CRITIC_SYSTEM_PROMPT,
+    build_reflection_critic_prompt,
+)
 from app.providers import LLMMessage, LLMProvider, LLMRequest, get_llm_provider
 from app.schemas.evidence import EvidenceReference, VerifiedFact
 
@@ -94,7 +97,7 @@ class ReflectionResult(BaseModel):
     complete: bool
     issues: tuple[ReflectionIssue, ...] = ()
     recommended_next_step: ReflectionNextStep
-    missing_information: tuple[RequiredFact, ...] = ()
+    missing_information: tuple[str, ...] = ()
     token_usage: AgentTokenUsage = Field(default_factory=AgentTokenUsage)
     latency_ms: float = Field(default=0.0, ge=0.0)
 
@@ -196,21 +199,27 @@ class ResolutionCriticAgent(BaseAgent):
             review_input = ReflectionInput.model_validate(context.payload["reflection_input"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ReflectionAgentError("valid reflection_input is required") from exc
-        result = await self.critique(review_input)
+        entity_ids = context.payload.get("entity_identifiers")
+        result = await self.critique(review_input, entity_identifiers=entity_ids)
         return AgentResult(
             status=AgentExecutionStatus.success,
             payload=result.model_dump(mode="json"),
             token_usage=result.token_usage,
         )
 
-    async def critique(self, review_input: ReflectionInput) -> ReflectionResult:
+    async def critique(
+        self,
+        review_input: ReflectionInput,
+        entity_identifiers: list[str] | tuple[str, ...] | None = None,
+    ) -> ReflectionResult:
         """Request strict JSON criticism from the provider using only redacted structured context."""
         safe_input = self._sanitize_input(review_input)
         critic_model = settings.MCSS_REFLECTION_MODEL or None
+        system_prompt = build_reflection_critic_prompt(entity_identifiers)
         request = LLMRequest(
             model=critic_model,
             messages=[
-                LLMMessage(role="system", content=REFLECTION_CRITIC_SYSTEM_PROMPT),
+                LLMMessage(role="system", content=system_prompt),
                 LLMMessage(role="user", content=json.dumps(safe_input, default=str)),
             ],
             temperature=0.0,
@@ -238,9 +247,11 @@ class ResolutionCriticAgent(BaseAgent):
                                 ]
                 if "missing_information" in raw and isinstance(raw["missing_information"], list):
                     allowed_facts = {f.value for f in RequiredFact}
+                    if entity_identifiers:
+                        allowed_facts.update(entity_identifiers)
                     raw["missing_information"] = [
                         fact for fact in raw["missing_information"]
-                        if isinstance(fact, str) and fact in allowed_facts
+                        if isinstance(fact, str) and (fact in allowed_facts or fact.strip())
                     ]
                 if "verdict" in raw and ("recommended_next_step" not in raw or not raw["recommended_next_step"]):
                     raw["recommended_next_step"] = "deliver" if raw["verdict"] == "approve" else raw["verdict"]

@@ -8,13 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.cursor import decode_cursor, encode_cursor
 from app.database import get_session
-from app.dependencies import require_staff
 from app.models.audit_event import AuditEvent
-from app.models.organization import Organization
-from app.models.user import User
+from app.models.organization import Organization, OrganizationMembership, OrgMemberRole
 from app.schemas.audit import AuditEventResponse
 from app.schemas.common import PaginatedResponse
 from app.tenancy.filter import TenantQueryScoper
+from app.tenancy.rbac import require_org_role
 from app.tenancy.resolver import resolve_tenant
 
 audit_router = APIRouter(prefix="/audit", tags=["audit"])
@@ -26,8 +25,15 @@ async def list_audit_events(
     resource_type: str | None = Query(default=None),
     cursor: str | None = Query(default=None),
     limit: int = Query(default=25, ge=1, le=100),
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(
+        require_org_role(
+            OrgMemberRole.agent,
+            OrgMemberRole.supervisor,
+            OrgMemberRole.admin,
+            OrgMemberRole.owner,
+        )
+    ),
     db: AsyncSession = Depends(get_session),
 ) -> PaginatedResponse[AuditEventResponse]:
     """Retrieve an immutable, paginated security audit journal scoped to active organization."""

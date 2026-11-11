@@ -145,11 +145,21 @@ class MultiAgentSynthesisCoordinator:
                     max_execution_tokens=context.budget.max_execution_tokens,
                     max_tool_calls=context.budget.max_tool_calls,
                 )
+                entity_schema = context.payload.get("entity_schema")
+                entity_ids = None
+                if entity_schema:
+                    if hasattr(entity_schema, "entities"):
+                        entity_ids = [e.primary_key for e in entity_schema.entities]
+                    elif isinstance(entity_schema, dict) and "entities" in entity_schema:
+                        entity_ids = [e.get("primary_key", "id") for e in entity_schema["entities"] if isinstance(e, dict)]
                 reflection_context = AgentContext(
                     tenant_id=context.tenant_id,
                     conversation_id=context.conversation_id,
                     execution_phase="reflection",
-                    payload={"reflection_input": reflection_input.model_dump(mode="json")},
+                    payload={
+                        "reflection_input": reflection_input.model_dump(mode="json"),
+                        "entity_identifiers": entity_ids,
+                    },
                     verified_customer_id=context.verified_customer_id,
                     budget=reflection_budget,
                     db=context.db,
@@ -227,7 +237,7 @@ class MultiAgentSynthesisCoordinator:
                 investigation_count += 1
                 try:
                     active_findings, active_evidence = await self._supplemental_investigation(
-                        tuple(item.value for item in reflection.missing_information)
+                        tuple(item.value if hasattr(item, "value") else str(item) for item in reflection.missing_information)
                     )
                 except Exception:
                     return await self._fail_closed(
@@ -247,7 +257,7 @@ class MultiAgentSynthesisCoordinator:
             if reflection.verdict is ReflectionVerdict.clarify:
                 return ResolutionResult(
                     status=ResolutionStatus.clarification_required,
-                    response_text=self._clarification_text(tuple(item.value for item in reflection.missing_information)),
+                    response_text=self._clarification_text(tuple(item.value if hasattr(item, "value") else str(item) for item in reflection.missing_information)),
                     citations=active_evidence.citations,
                     reason="reflection_requested_clarification",
                     reflection=reflection,
@@ -374,7 +384,7 @@ class MultiAgentSynthesisCoordinator:
             "requested_action": "the action you would like us to take",
             "policy_scope": "which policy detail you need clarified",
         }
-        requested = [prompts[item] for item in missing_information if item in prompts]
+        requested = [prompts.get(item, f"the {item.replace('_', ' ')}") for item in missing_information]
         if not requested:
             return "Could you clarify the detail needed to complete this request?"
         return f"Could you provide {', '.join(requested)} so I can complete this request?"

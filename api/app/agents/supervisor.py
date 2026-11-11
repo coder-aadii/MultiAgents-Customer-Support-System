@@ -132,8 +132,33 @@ class SupervisorAgent(BaseAgent):
         if not self._enabled:
             return PlanningDecision.handoff("multi_agent_orchestration_disabled", replan_attempt), AgentTokenUsage()
 
+        entity_schema_raw = context.payload.get("entity_schema")
+        entity_schema = None
+        if entity_schema_raw:
+            from app.schemas.entities import OrganizationEntitySchema
+            if isinstance(entity_schema_raw, OrganizationEntitySchema):
+                entity_schema = entity_schema_raw
+            elif isinstance(entity_schema_raw, dict):
+                try:
+                    entity_schema = OrganizationEntitySchema.model_validate(entity_schema_raw)
+                except Exception:
+                    pass
+
+        if entity_schema is None and context.db is not None and context.tenant_id is not None:
+            from app.models.organization import Organization
+            from app.schemas.entities import OrganizationEntitySchema
+            org = await context.db.get(Organization, context.tenant_id)
+            if org and org.entity_schemas_json and org.entity_schemas_json.get("entities"):
+                try:
+                    entity_schema = OrganizationEntitySchema.model_validate(org.entity_schemas_json)
+                except Exception:
+                    pass
+        if entity_schema is None:
+            from app.schemas.entities import get_default_olist_entity_schema
+            entity_schema = get_default_olist_entity_schema()
+
         user_message = self._user_message(context)
-        fast_path_target = self._fast_path_target(user_message)
+        fast_path_target = self._fast_path_target(user_message, entity_schema=entity_schema)
         if fast_path_target:
             return (
                 PlanningDecision(
@@ -152,7 +177,7 @@ class SupervisorAgent(BaseAgent):
             messages=[
                 LLMMessage(
                     role="system",
-                    content=build_supervisor_planner_prompt(self._registry.list_agents()),
+                    content=build_supervisor_planner_prompt(self._registry.list_agents(), entity_schema=entity_schema),
                 ),
                 LLMMessage(role="user", content=user_message),
             ],
@@ -190,7 +215,7 @@ class SupervisorAgent(BaseAgent):
         return message.strip()[:MAX_USER_MESSAGE_CHARS]
 
     @staticmethod
-    def _fast_path_target(message: str) -> str | None:
+    def _fast_path_target(message: str, entity_schema: Any = None) -> str | None:
         if _GREETING.fullmatch(message):
             return "knowledge_specialist"
 
@@ -284,13 +309,46 @@ class SupervisorAgent(BaseAgent):
         is_logistics = any(term in normalized for term in ("tracking", "shipment", "carrier", "delivery", "delayed"))
         is_billing = any(term in normalized for term in ("refund", "invoice", "billing", "payment", "charge"))
 
+        matched_custom_entity = None
+        if entity_schema and getattr(entity_schema, "entities", None):
+            for ent in entity_schema.entities:
+                if ent.name not in ("order", "shipment", "refund", "customer"):
+                    if ent.identifier_pattern:
+                        try:
+                            if re.search(ent.identifier_pattern, message, re.I):
+                                matched_custom_entity = ent.name
+                                break
+                        except re.error:
+                            pass
+                    if any(
+                        phrase in normalized
+                        for phrase in (
+                            f"my {ent.name}",
+                            f"{ent.name} status",
+                            f"status of {ent.name}",
+                            f"status of my {ent.name}",
+                            f"where is my {ent.name}",
+                            f"check {ent.name}",
+                            f"check my {ent.name}",
+                            f"list my {ent.name}s",
+                            f"show my {ent.name}s",
+                            f"list {ent.name}s",
+                        )
+                    ):
+                        matched_custom_entity = ent.name
+                        break
+
         if (
             is_record_lookup
             and not is_process_how_to
             and not is_policy_inquiry
             and not (is_logistics or is_billing)
+            and not matched_custom_entity
         ):
             domains.add("business_data_specialist")
+
+        if matched_custom_entity and not is_process_how_to and not is_policy_inquiry:
+            domains.add("universal_entity_specialist")
 
         if is_logistics:
             domains.add("logistics_specialist")

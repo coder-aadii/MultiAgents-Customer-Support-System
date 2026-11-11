@@ -37,6 +37,9 @@ class Organization(Base):
     settings_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict
     )
+    entity_schemas_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

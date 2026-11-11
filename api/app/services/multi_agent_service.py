@@ -211,11 +211,26 @@ async def handle_multi_agent_pipeline(
             db.add(auth_msg)
             await db.commit()
             return auth_msg
+
+    # Load active tenant entity schema for dynamic planning and parameter resolution
+    from app.models.organization import Organization
+    from app.schemas.entities import OrganizationEntitySchema, get_default_olist_entity_schema
+
+    org_obj = await db.get(Organization, conversation.organization_id)
+    entity_schema = None
+    if org_obj and org_obj.entity_schemas_json and org_obj.entity_schemas_json.get("entities"):
+        try:
+            entity_schema = OrganizationEntitySchema.model_validate(org_obj.entity_schemas_json)
+        except Exception:
+            pass
+    if entity_schema is None:
+        entity_schema = get_default_olist_entity_schema()
+
     context = AgentContext(
         tenant_id=conversation.organization_id,
         conversation_id=conversation_id,
         execution_phase="supervisor",
-        payload={"user_message": visitor_message_content},
+        payload={"user_message": visitor_message_content, "entity_schema": entity_schema.model_dump(mode="json")},
         verified_customer_id=session.verified_customer_id if session else None,
         db=db,
         visitor_session=session,
@@ -238,7 +253,7 @@ async def handle_multi_agent_pipeline(
     if decision.outcome is PlanningOutcome.handoff:
         return await _handoff(db, conversation, f"supervisor:{decision.reason}")
     plan = decision.plan if decision.outcome is PlanningOutcome.plan else _fast_path_plan(decision.target_agent, visitor_message_content)
-    plan = _resolve_task_inputs(plan, visitor_message_content) if plan is not None else None
+    plan = _resolve_task_inputs(plan, visitor_message_content, entity_schema=entity_schema) if plan is not None else None
     if plan is None:
         return await _handoff(db, conversation, "invalid_supervisor_fast_path")
 
@@ -305,49 +320,118 @@ _SHIPMENT_ID = re.compile(r"\b(?:TRK|SHP|BR)-[0-9A-Z]{3,32}\b", re.I)
 _REFUND_ID = re.compile(r"\bREF-[0-9A-Z]{3,32}\b", re.I)
 
 
-def _resolve_task_inputs(plan: InvestigationPlan, message: str) -> InvestigationPlan | None:
-    """Inject and validate server-derived IDs; never ask a planner to invent them."""
-    def match(pattern: re.Pattern[str]) -> str | None:
-        found = pattern.search(message)
-        return found.group(0).upper() if found else None
+class DynamicTaskInputResolver:
+    """Dynamically parameterizes task inputs based on active tenant entity definitions."""
 
-    resolved: list[TaskNode] = []
-    for task in plan.tasks:
-        inputs = dict(task.required_inputs)
-        inputs.setdefault("query", message)
-        if task.assigned_agent == "business_data_specialist":
-            norm_desc = (task.task_description or "").lower()
-            norm_msg = message.lower()
-            if is_identity_query(norm_msg) or is_identity_query(norm_desc):
-                inputs["entity_type"] = "customer"
-            else:
-                inputs.setdefault("entity_type", "order")
-                order_id = match(_ORDER_ID)
-                if order_id:
-                    inputs["entity_id"] = order_id.lstrip("#")
-        elif task.assigned_agent == "logistics_specialist":
-            shipment_id = match(_SHIPMENT_ID)
-            if shipment_id is not None:
-                inputs["entity_id"] = shipment_id
-            elif "order" in message.lower() or match(_ORDER_ID):
-                # Fall back to business_data_specialist if order query lacked carrier tracking code
-                task = task.model_copy(update={
-                    "assigned_agent": "business_data_specialist",
-                    "task_description": "Investigate order and shipment status using authorized read-only data.",
-                })
-                inputs["entity_type"] = "order"
-                order_id = match(_ORDER_ID)
-                if order_id:
-                    inputs["entity_id"] = order_id.lstrip("#")
-            else:
+    @staticmethod
+    def resolve(
+        plan: InvestigationPlan,
+        message: str,
+        entity_schema: Any = None,
+    ) -> InvestigationPlan | None:
+        from app.schemas.entities import OrganizationEntitySchema, get_default_olist_entity_schema
+
+        schema: OrganizationEntitySchema
+        if isinstance(entity_schema, OrganizationEntitySchema):
+            schema = entity_schema
+        elif isinstance(entity_schema, dict):
+            schema = OrganizationEntitySchema.model_validate(entity_schema)
+        else:
+            schema = get_default_olist_entity_schema()
+
+        patterns = schema.get_pattern_map()
+
+        def match(pattern: re.Pattern[str]) -> str | None:
+            found = pattern.search(message)
+            if not found:
                 return None
-        elif task.assigned_agent == "billing_specialist":
-            refund_id = match(_REFUND_ID)
-            if refund_id is None:
-                return None
-            inputs["refund_id"] = refund_id
-        resolved.append(task.model_copy(update={"required_inputs": inputs}))
-    return plan.model_copy(update={"tasks": tuple(resolved)})
+            val = found.group(0).strip()
+            # Canonicalize alphanumeric prefixed IDs (e.g. ORD-123, WS-101) while preserving casing for non-prefixed IDs
+            if re.match(r"^[a-zA-Z]{2,6}-", val):
+                return val.upper()
+            return val
+
+        # Extract all matched entity IDs from message
+        matched_entities: dict[str, str] = {}
+        for ent_name, pat in patterns.items():
+            m = match(pat)
+            if m:
+                matched_entities[ent_name] = m
+
+        resolved: list[TaskNode] = []
+        for task in plan.tasks:
+            inputs = dict(task.required_inputs)
+            inputs.setdefault("query", message)
+            agent = task.assigned_agent
+
+            if agent == "universal_entity_specialist":
+                target_entity = inputs.get("entity_type")
+                if not target_entity:
+                    for ent in schema.entities:
+                        if ent.name in matched_entities:
+                            target_entity = ent.name
+                            break
+                    if not target_entity:
+                        norm_msg = message.lower()
+                        for ent in schema.entities:
+                            if ent.name in norm_msg or f"{ent.name}s" in norm_msg or ent.display_name.lower() in norm_msg:
+                                target_entity = ent.name
+                                break
+                    if not target_entity and schema.entities:
+                        target_entity = schema.entities[0].name
+                inputs["entity_type"] = target_entity
+                if target_entity and target_entity in matched_entities:
+                    inputs["entity_id"] = matched_entities[target_entity].lstrip("#")
+
+            elif agent == "business_data_specialist":
+                norm_desc = (task.task_description or "").lower()
+                norm_msg = message.lower()
+                if is_identity_query(norm_msg) or is_identity_query(norm_desc):
+                    inputs["entity_type"] = "customer"
+                else:
+                    inputs.setdefault("entity_type", "order")
+                    order_pat = patterns.get("order", _ORDER_ID)
+                    order_id = match(order_pat)
+                    if order_id:
+                        inputs["entity_id"] = order_id.lstrip("#")
+
+            elif agent == "logistics_specialist":
+                shipment_pat = patterns.get("shipment", _SHIPMENT_ID)
+                shipment_id = match(shipment_pat)
+                order_pat = patterns.get("order", _ORDER_ID)
+                if shipment_id is not None:
+                    inputs["entity_id"] = shipment_id
+                elif "order" in message.lower() or match(order_pat):
+                    task = task.model_copy(update={
+                        "assigned_agent": "business_data_specialist",
+                        "task_description": "Investigate order and shipment status using authorized read-only data.",
+                    })
+                    inputs["entity_type"] = "order"
+                    order_id = match(order_pat)
+                    if order_id:
+                        inputs["entity_id"] = order_id.lstrip("#")
+                else:
+                    return None
+
+            elif agent == "billing_specialist":
+                refund_pat = patterns.get("refund", _REFUND_ID)
+                refund_id = match(refund_pat)
+                if refund_id is None:
+                    return None
+                inputs["refund_id"] = refund_id
+
+            resolved.append(task.model_copy(update={"required_inputs": inputs}))
+
+        return plan.model_copy(update={"tasks": tuple(resolved)})
+
+
+def _resolve_task_inputs(
+    plan: InvestigationPlan,
+    message: str,
+    entity_schema: Any = None,
+) -> InvestigationPlan | None:
+    """Inject and validate server-derived IDs; never ask a planner to invent them."""
+    return DynamicTaskInputResolver.resolve(plan, message, entity_schema=entity_schema)
 
 
 async def _persist_response(

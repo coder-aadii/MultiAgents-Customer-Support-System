@@ -76,6 +76,10 @@ try:
     doc_cols = {col["name"] for col in inspector.get_columns("knowledge_documents")}
     assert "content_hash" in doc_cols, "Column 'content_hash' missing on knowledge_documents in head"
 
+    # Check 0019 column
+    org_cols = {col["name"] for col in inspector.get_columns("organizations")}
+    assert "entity_schemas_json" in org_cols, "Column 'entity_schemas_json' missing on organizations in head"
+
     with engine.connect() as conn:
         rev = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
         print(f"  Head revision verified: {rev}")
@@ -92,6 +96,9 @@ try:
 
     doc_cols_downgraded = {col["name"] for col in inspector_downgraded.get_columns("knowledge_documents")}
     assert "content_hash" not in doc_cols_downgraded, "Column 'content_hash' was not dropped"
+
+    org_cols_downgraded = {col["name"] for col in inspector_downgraded.get_columns("organizations")}
+    assert "entity_schemas_json" not in org_cols_downgraded, "Column 'entity_schemas_json' was not dropped"
 
     with engine.connect() as conn:
         rev = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
@@ -214,6 +221,9 @@ try:
 
     doc_cols_downgraded = {col["name"] for col in inspector_downgraded.get_columns("knowledge_documents")}
     assert "content_hash" not in doc_cols_downgraded, "Column 'content_hash' was not dropped"
+
+    org_cols_downgraded = {col["name"] for col in inspector_downgraded.get_columns("organizations")}
+    assert "entity_schemas_json" not in org_cols_downgraded, "Column 'entity_schemas_json' was not dropped"
 
     with engine.connect() as conn:
         rev = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()

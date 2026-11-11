@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from app.api.router import api_v1_router
+from app.api.router import api_v1_router, headless_router
 from app.common.errors import AppException, format_error_response
 from app.config import settings
 from app.database import check_database_connection, close_db
@@ -183,6 +183,7 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(api_v1_router)
+app.include_router(headless_router)
 
 
 @app.get("/healthz", tags=["health"])
