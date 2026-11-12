@@ -7,6 +7,7 @@ export interface IndustryProfile {
   description: string;
   accentColor: string;
   bgLight: string;
+  welcomeMessage: string;
   entities: string[];
   prompts: string[];
   sampleUser: {
@@ -28,6 +29,7 @@ export const INDUSTRIES: Record<string, IndustryProfile> = {
     description: "Real Brazilian E-Commerce dataset (99,441 customers, 99,441 orders, 112,650 line items).",
     accentColor: "#2563eb",
     bgLight: "#eff6ff",
+    welcomeMessage: "Hello! How can I help you today? You can ask about our return and refund policies, track a shipment, or look up your orders.",
     entities: ["order (ORD-*)", "shipment (TRK-*)", "refund (REF-*)", "customer (CUST-*)"],
     prompts: [
       "What is the status of my order ORD-1001?",
@@ -52,6 +54,7 @@ export const INDUSTRIES: Record<string, IndustryProfile> = {
     description: "Cloud Observability & Telemetry Infrastructure (Workspaces, Quotas, Subscriptions).",
     accentColor: "#059669",
     bgLight: "#ecfdf5",
+    welcomeMessage: "Hello! Welcome to CloudPulse SaaS Support. You can check your cloud workspaces, subscription tiers, or API quotas.",
     entities: ["workspace (WS-*)", "subscription (SUB-*)", "api_quota (QUOTA-*)"],
     prompts: [
       "What is my data retention period on workspace WS-771a8b?",
@@ -76,6 +79,7 @@ export const INDUSTRIES: Record<string, IndustryProfile> = {
     description: "Commercial & Retail Banking (Checking, Wire Transfers, Card Disputes, Fraud Triage).",
     accentColor: "#0f172a",
     bgLight: "#f8fafc",
+    welcomeMessage: "Hello! Welcome to Apex Global Bank Support. You can check your account balances, track wire transfers, or dispute transactions.",
     entities: ["account (ACC-*)", "transaction (TXN-*)", "wire_transfer (WIRE-*)"],
     prompts: [
       "What is the available balance on account ACC-440192?",
@@ -100,6 +104,7 @@ export const INDUSTRIES: Record<string, IndustryProfile> = {
     description: "Clinical Telehealth Portal (Appointments, Prescriptions, Nurse Handoff, Medical Triage).",
     accentColor: "#e11d48",
     bgLight: "#fff1f2",
+    welcomeMessage: "Hello! Welcome to MediCare Telehealth Support. You can check upcoming appointments, refill active prescriptions, or request nurse triage.",
     entities: ["patient (PAT-*)", "appointment (APT-*)", "prescription (RX-*)"],
     prompts: [
       "When is my upcoming appointment APT-1092?",

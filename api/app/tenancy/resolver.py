@@ -93,7 +93,52 @@ async def resolve_tenant(
         stmt = select(Organization).where(Organization.slug == target_slug, Organization.is_active.is_(True))
         res = await db.execute(stmt)
         org = res.scalar_one_or_none()
-        if not org:
+        norm_slug = target_slug.lower().strip()
+        if not org and norm_slug in {"cloudpulse", "apex-bank", "apex_bank", "medicare"}:
+            from app.models.widget_settings import WidgetSettings
+            from app.schemas.entities import (
+                get_default_cloudpulse_entity_schema,
+                get_default_apex_bank_entity_schema,
+                get_default_medicare_entity_schema,
+            )
+            canonical_slug = "apex-bank" if norm_slug in {"apex-bank", "apex_bank"} else norm_slug
+            schema_meta = {
+                "cloudpulse": ("CloudPulse SaaS", get_default_cloudpulse_entity_schema(), "#059669"),
+                "apex-bank": ("Apex Global Bank", get_default_apex_bank_entity_schema(), "#0f172a"),
+                "medicare": ("MediCare Telehealth", get_default_medicare_entity_schema(), "#e11d48"),
+            }
+            org_name, schema_def, accent = schema_meta[canonical_slug]
+            org = Organization(
+                slug=canonical_slug,
+                name=org_name,
+                entity_schemas_json=schema_def.model_dump(mode="json"),
+                is_active=True,
+            )
+            db.add(org)
+            await db.flush()
+            ws = WidgetSettings(
+                organization_id=org.id,
+                allowed_origin="*",
+                welcome_message=f"Welcome to {org_name} Support",
+                accent_color=accent,
+            )
+            db.add(ws)
+            await db.commit()
+        elif org and not org.entity_schemas_json and norm_slug in {"cloudpulse", "apex-bank", "apex_bank", "medicare"}:
+            from app.schemas.entities import (
+                get_default_cloudpulse_entity_schema,
+                get_default_apex_bank_entity_schema,
+                get_default_medicare_entity_schema,
+            )
+            canonical_slug = "apex-bank" if norm_slug in {"apex-bank", "apex_bank"} else norm_slug
+            schema_map = {
+                "cloudpulse": get_default_cloudpulse_entity_schema(),
+                "apex-bank": get_default_apex_bank_entity_schema(),
+                "medicare": get_default_medicare_entity_schema(),
+            }
+            org.entity_schemas_json = schema_map[canonical_slug].model_dump(mode="json")
+            await db.commit()
+        elif not org:
             raise NotFoundError(f"Organization slug '{target_slug}' not found or inactive")
     else:
         # 4. Fallback to default organization (e.g., Olist demo store)

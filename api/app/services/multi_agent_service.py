@@ -49,6 +49,65 @@ async def _has_active_handoff(db: AsyncSession, conversation_id: uuid.UUID) -> b
     return has_handoff is not None
 
 
+def _build_tenant_greeting(org: Organization | None) -> str:
+    if not org:
+        return (
+            "Hello! How can I help you today? You can ask about our return and refund policies, "
+            "track a shipment, or look up your orders."
+        )
+    slug = (org.slug or "").lower()
+    schema_ents = []
+    if org.entity_schemas_json and isinstance(org.entity_schemas_json, dict):
+        schema_ents = [e.get("name", "").lower() for e in org.entity_schemas_json.get("entities", []) if isinstance(e, dict)]
+    
+    if slug in ("apex-bank", "apex_bank") or any(e in ("account", "wire_transfer") for e in schema_ents):
+        return f"Hello! Welcome to {org.name or 'Apex Global Bank'}. How can I help you today? You can check your account balances, track wire transfers, or dispute transactions."
+    if slug == "cloudpulse" or any(e in ("workspace", "api_quota") for e in schema_ents):
+        return f"Hello! Welcome to {org.name or 'CloudPulse SaaS'}. How can I help you today? You can check your cloud workspaces, subscription tiers, or API quotas."
+    if slug == "medicare" or any(e in ("patient", "appointment", "prescription") for e in schema_ents):
+        return f"Hello! Welcome to {org.name or 'MediCare Telehealth'}. How can I help you today? You can check upcoming appointments, refill active prescriptions, or request nurse triage."
+
+    return (
+        "Hello! How can I help you today? You can ask about our return and refund policies, "
+        "track a shipment, or look up your orders."
+    )
+
+
+def _build_tenant_auth_required(org: Organization | None) -> str:
+    if not org:
+        return (
+            "To view, track, or manage your orders and account details, please log in to your account first. "
+            "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely view your orders. "
+            "If you have general questions about our return policy or shipping procedures, feel free to ask!"
+        )
+    slug = (org.slug or "").lower()
+    schema_ents = []
+    if org.entity_schemas_json and isinstance(org.entity_schemas_json, dict):
+        schema_ents = [e.get("name", "").lower() for e in org.entity_schemas_json.get("entities", []) if isinstance(e, dict)]
+    
+    if slug in ("apex-bank", "apex_bank") or any(e in ("account", "wire_transfer") for e in schema_ents):
+        return (
+            "To view, track, or manage your bank accounts and financial records, please log in to your account first. "
+            "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely access your banking details."
+        )
+    if slug == "cloudpulse" or any(e in ("workspace", "api_quota") for e in schema_ents):
+        return (
+            "To view, track, or manage your cloud workspaces and subscriptions, please log in to your account first. "
+            "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely access your cloud telemetry."
+        )
+    if slug == "medicare" or any(e in ("patient", "appointment", "prescription") for e in schema_ents):
+        return (
+            "To view, track, or manage your appointments and prescription records, please log in to your account first. "
+            "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely access your patient portal."
+        )
+
+    return (
+        "To view, track, or manage your orders and account details, please log in to your account first. "
+        "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely view your orders. "
+        "If you have general questions about our return policy or shipping procedures, feel free to ask!"
+    )
+
+
 async def handle_multi_agent_pipeline(
     *,
     db: AsyncSession,
@@ -65,6 +124,9 @@ async def handle_multi_agent_pipeline(
     if await _has_active_handoff(db, conversation_id):
         return None
 
+    from app.models.organization import Organization
+    org_obj = await db.get(Organization, conversation.organization_id)
+
     clean_msg = re.sub(r"[^\w\s]", "", visitor_message_content.strip().lower()).strip()
     greetings = {
         "hi", "hello", "hey", "hey there", "hi there", "hello there",
@@ -78,15 +140,15 @@ async def handle_multi_agent_pipeline(
         now_msg = datetime.now(UTC)
         active.last_message_at = now_msg
         active.updated_at = now_msg
+        from app.prompts.greeting import generate_tenant_greeting_with_llm
+        greeting_text = await generate_tenant_greeting_with_llm(org_obj, visitor_message_content)
+
         greeting_msg = Message(
             organization_id=active.organization_id,
             conversation_id=active.id,
             client_message_id=uuid.uuid4(),
             sender_type=SenderType.assistant,
-            content=(
-                "Hello! How can I help you today? You can ask about our return and refund policies, "
-                "track a shipment, or look up your orders."
-            ),
+            content=greeting_text,
             metadata_json={"action": "answer", "reason": "greeting", "sources": []},
             created_at=now_msg,
         )
@@ -196,16 +258,14 @@ async def handle_multi_agent_pipeline(
             now_msg = datetime.now(UTC)
             active.last_message_at = now_msg
             active.updated_at = now_msg
+            from app.prompts.greeting import generate_tenant_auth_required_with_llm
+            auth_required_text = await generate_tenant_auth_required_with_llm(org_obj, visitor_message_content)
             auth_msg = Message(
                 organization_id=active.organization_id,
                 conversation_id=active.id,
                 client_message_id=uuid.uuid4(),
                 sender_type=SenderType.assistant,
-                content=(
-                    "To view, track, or manage your orders and account details, please log in to your account first. "
-                    "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely view your orders. "
-                    "If you have general questions about our return policy or shipping procedures, feel free to ask!"
-                ),
+                content=auth_required_text,
                 metadata_json={"action": "clarify", "reason": "authentication_required", "sources": []},
                 created_at=now_msg,
             )
@@ -385,13 +445,21 @@ class DynamicTaskInputResolver:
 
             if agent == "universal_entity_specialist":
                 target_entity = inputs.get("entity_type")
+                norm_msg = message.lower()
                 if not target_entity:
-                    for ent in schema.entities:
-                        if ent.name in matched_entities:
-                            target_entity = ent.name
-                            break
+                    if is_identity_query(norm_msg):
+                        if "account" in norm_msg and any(e.name == "account" for e in schema.entities):
+                            target_entity = "account"
+                        elif any(e.name == "patient" for e in schema.entities):
+                            target_entity = "patient"
+                        else:
+                            target_entity = "customer"
+                    else:
+                        for ent in schema.entities:
+                            if ent.name in matched_entities:
+                                target_entity = ent.name
+                                break
                     if not target_entity:
-                        norm_msg = message.lower()
                         for ent in schema.entities:
                             if ent.name in norm_msg or f"{ent.name}s" in norm_msg or ent.display_name.lower() in norm_msg:
                                 target_entity = ent.name
@@ -401,6 +469,9 @@ class DynamicTaskInputResolver:
                 inputs["entity_type"] = target_entity
                 if target_entity and target_entity in matched_entities:
                     inputs["entity_id"] = matched_entities[target_entity].lstrip("#")
+                elif target_entity in ("customer", "patient") and not inputs.get("entity_id"):
+                    # Will resolve from verified session customer ID
+                    pass
 
             elif agent == "business_data_specialist":
                 norm_desc = (task.task_description or "").lower()

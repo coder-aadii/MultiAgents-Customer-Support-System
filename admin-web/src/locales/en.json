@@ -180,6 +180,7 @@
     "eventType": "Event Type",
     "actor": "Actor",
     "resource": "Resource",
-    "timestamp": "Timestamp"
+    "timestamp": "Timestamp",
+    "empty": "No audit events found"
   }
 }

@@ -1132,7 +1132,10 @@ async def handle_assistant_pipeline(
                 return None
 
             if triage.reason == "authentication_required":
-                clarify_text = "Please log in to your store account to view your order, shipment, or account details."
+                from app.models.organization import Organization
+                from app.prompts.greeting import generate_tenant_auth_required_with_llm
+                org_obj = await db.get(Organization, active_conv.organization_id) if active_conv.organization_id else None
+                clarify_text = await generate_tenant_auth_required_with_llm(org_obj, visitor_message_content)
             else:
                 clarify_text = "Could you please clarify your request with a few more details so I can find the right information?"
             msg_now = datetime.now(UTC)
@@ -1213,14 +1216,16 @@ async def handle_assistant_pipeline(
             msg_now = datetime.now(UTC)
             active_conv.last_message_at = msg_now
             active_conv.updated_at = msg_now
+            from app.models.organization import Organization
+            from app.prompts.greeting import generate_tenant_greeting_with_llm
+            org_obj = await db.get(Organization, active_conv.organization_id) if active_conv.organization_id else None
+            greeting_text = await generate_tenant_greeting_with_llm(org_obj, visitor_message_content)
+
             greeting_msg = Message(
                 conversation_id=conversation_id,
                 client_message_id=uuid.uuid4(),
                 sender_type=SenderType.assistant,
-                content=(
-                    "Hello! How can I help you today? You can ask about our return and refund policies, "
-                    "track a shipment, or look up your orders."
-                ),
+                content=greeting_text,
                 metadata_json={"action": "answer", "reason": "greeting", "sources": []},
                 created_at=msg_now,
             )

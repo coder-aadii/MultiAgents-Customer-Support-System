@@ -104,6 +104,22 @@ class CustomerTokenVerifier:
         if not token_stripped:
             raise CustomerTokenInvalidError("Customer token cannot be empty")
 
+        # Allow pre-seeded demo tokens in non-production development environments
+        if getattr(settings, "MCSS_ENV", "development") != "production" and token_stripped.startswith("demo_jwt_"):
+            demo_cid = token_stripped[len("demo_jwt_"):]
+            now = datetime.now(UTC)
+            return VerifiedCustomerIdentity(
+                customer_id=demo_cid,
+                email=f"{demo_cid}@showcase.demo",
+                issuer=self.issuer or "mcss-demo",
+                audience=self.audience or "mcss-widget",
+                identity_assurance_level=2,
+                token_hash=self._hash_token(token_stripped),
+                expires_at=now + timedelta(hours=24),
+                issued_at=now,
+                organization_id=None,
+            )
+
         # 1. Inspect unverified header for algorithm safety
         try:
             unverified_header = jwt.get_unverified_header(token_stripped)

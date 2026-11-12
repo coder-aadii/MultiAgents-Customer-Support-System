@@ -5,6 +5,7 @@ export interface WidgetSessionResponse {
   visitor_id: string;
   conversation_id: string;
   expires_at: string;
+  welcome_message?: string;
 }
 
 export interface WidgetConversation {
@@ -49,7 +50,7 @@ export interface VisitorProfile {
  * Creates an encapsulated visitor-only API client bound to a single visitor session.
  * Cannot access or invoke staff or admin endpoints.
  */
-export function createWidgetApiClient(baseUrl?: string) {
+export function createWidgetApiClient(baseUrl?: string, orgSlug?: string) {
   let sessionToken: string | null = null;
   const API_BASE_URL =
     baseUrl || (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) || "/api/v1";
@@ -63,6 +64,10 @@ export function createWidgetApiClient(baseUrl?: string) {
     const url = config.url || "";
     if (!url.startsWith("/widget")) {
       throw new Error(`Widget client forbidden from accessing non-widget route: ${url}`);
+    }
+
+    if (orgSlug && !config.headers["X-Organization-Slug"]) {
+      config.headers["X-Organization-Slug"] = orgSlug;
     }
 
     if (sessionToken && !config.headers.Authorization) {

@@ -77,6 +77,7 @@ async def create_or_resume_session(
     configured_origin = (
         widget_setting.allowed_origin if widget_setting else settings.WIDGET_ALLOWED_ORIGIN
     )
+    configured_welcome = widget_setting.welcome_message if widget_setting and widget_setting.welcome_message else None
 
     # 2. Strict origin validation
     if not is_allowed_origin(origin, configured_origin):
@@ -201,6 +202,7 @@ async def create_or_resume_session(
                         expires_at=existing_session.expires_at,
                         identity_assurance_level=2,
                         verified_customer_id=existing_session.verified_customer_id,
+                        welcome_message=configured_welcome,
                     )
 
             # Case B: Previously anonymous session (IAL == 0)
@@ -254,6 +256,7 @@ async def create_or_resume_session(
                         expires_at=existing_session.expires_at,
                         identity_assurance_level=2,
                         verified_customer_id=existing_session.verified_customer_id,
+                        welcome_message=configured_welcome,
                     )
 
     # 5. Create new visitor, conversation, and session
@@ -262,9 +265,13 @@ async def create_or_resume_session(
     if not visitor_email and verified_identity and verified_identity.email:
         visitor_email = verified_identity.email
 
+    visitor_name = name
+    if not visitor_name and verified_identity:
+        visitor_name = verified_identity.customer_id
+
     visitor = Visitor(
         organization_id=org_id,
-        name=name,
+        name=visitor_name,
         email=visitor_email,
         created_at=now,
         last_seen_at=now,
@@ -339,6 +346,7 @@ async def create_or_resume_session(
         expires_at=expires_at,
         identity_assurance_level=session.identity_assurance_level,
         verified_customer_id=session.verified_customer_id,
+        welcome_message=configured_welcome,
     )
 
 

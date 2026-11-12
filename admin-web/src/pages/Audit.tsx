@@ -160,7 +160,7 @@ export default function Audit() {
             type="text"
             value={eventTypeFilter}
             onChange={(e) => setEventTypeFilter(e.target.value)}
-            placeholder="e.g. auth.login, message.create"
+            placeholder="Search event (e.g. auth, message, session)"
             className="w-full rounded-md border-gray-300 shadow-xs text-sm p-2 border focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
@@ -173,7 +173,7 @@ export default function Audit() {
             type="text"
             value={resourceTypeFilter}
             onChange={(e) => setResourceTypeFilter(e.target.value)}
-            placeholder="e.g. conversation, message, tool"
+            placeholder="Search resource (e.g. session, message, token)"
             className="w-full rounded-md border-gray-300 shadow-xs text-sm p-2 border focus:ring-blue-500 focus:border-blue-500"
           />
         </div>

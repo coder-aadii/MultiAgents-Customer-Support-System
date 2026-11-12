@@ -176,7 +176,7 @@ async def test_widget_settings_and_audit_security_lifecycle():
         assert "settings.update" in event_types
         assert "security.leak" not in event_types  # From org_b, must be strictly excluded
 
-        # Test Case 7: Audit log filter by event_type
+        # Test Case 7: Audit log partial filter by event_type
         resp = await client.get(
             "/api/v1/audit/events?event_type=settings.update",
             headers={"Authorization": f"Bearer {admin_a_token}"},
@@ -185,4 +185,24 @@ async def test_widget_settings_and_audit_security_lifecycle():
         filtered = resp.json()
         assert len(filtered["items"]) == 1
         assert filtered["items"][0]["event_type"] == "settings.update"
+
+        # Test Case 8: Substring/prefix partial match (e.g. 'sec' matches 'security.login')
+        resp_partial = await client.get(
+            "/api/v1/audit/events?event_type=sec",
+            headers={"Authorization": f"Bearer {admin_a_token}"},
+        )
+        assert resp_partial.status_code == 200
+        partial_items = resp_partial.json()["items"]
+        assert len(partial_items) == 1
+        assert partial_items[0]["event_type"] == "security.login"
+
+        # Test Case 9: Partial resource_type match (e.g. 'wid' matches 'widget')
+        resp_res = await client.get(
+            "/api/v1/audit/events?resource_type=wid",
+            headers={"Authorization": f"Bearer {admin_a_token}"},
+        )
+        assert resp_res.status_code == 200
+        res_items = resp_res.json()["items"]
+        assert len(res_items) == 1
+        assert res_items[0]["resource_type"] == "widget"
 

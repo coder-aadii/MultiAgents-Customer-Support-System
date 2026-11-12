@@ -150,6 +150,10 @@ class FakeLLMProvider(LLMProvider):
         # Check if classifier prompt
         if "classify" in system_text.lower():
             content = self._deterministic_classifier(current_user_text)
+        elif "greeting" in system_text.lower():
+            content = self._deterministic_greeting_generator(system_text, user_text)
+        elif "unauthenticated" in system_text.lower() or "log in to their account first" in system_text.lower():
+            content = self._deterministic_auth_required_generator(system_text, user_text)
         elif "sources" in system_text.lower() or "cited_chunk_ids" in system_text.lower():
             content = self._deterministic_answer_generator(system_text, user_text)
         elif "supervisor" in system_text.lower() or "investigation plan" in system_text.lower():
@@ -176,13 +180,17 @@ class FakeLLMProvider(LLMProvider):
                         },
                     ],
                 })
-            elif any(w in lower_msg for w in ("workspace", "ws-", "sub-", "quota-", "api_quota")):
+            elif any(w in lower_msg for w in (
+                "workspace", "ws-", "sub-", "quota-", "api_quota",
+                "bank account", "checking account", "acc-", "transaction", "txn-", "wire", "wire-", "wire_transfer",
+                "patient", "pat-", "appointment", "apt-", "prescription", "rx-",
+            )):
                 content = json.dumps({
                     "user_intents": ["inquiry"],
                     "tasks": [{
                         "task_id": "primary_investigation",
                         "assigned_agent": "universal_entity_specialist",
-                        "task_description": "Investigate SaaS inquiry.",
+                        "task_description": "Investigate multi-industry enterprise entity.",
                         "required_inputs": {"query": current_user_text},
                         "dependencies": [],
                     }],
@@ -309,3 +317,38 @@ class FakeLLMProvider(LLMProvider):
             "action": "handoff",
             "reason": "no_evidence_available",
         })
+
+    def _deterministic_greeting_generator(self, system_text: str, user_text: str) -> str:
+        sys_lower = system_text.lower()
+        if "apex" in sys_lower or "bank" in sys_lower:
+            return "Hello! Welcome to Apex Global Bank. How can I help you today? You can check your account balances, track wire transfers, or dispute transactions."
+        if "cloudpulse" in sys_lower or "workspace" in sys_lower:
+            return "Hello! Welcome to CloudPulse SaaS. How can I help you today? You can check your cloud workspaces, subscription tiers, or API quotas."
+        if "medicare" in sys_lower or "telehealth" in sys_lower or "appointment" in sys_lower:
+            return "Hello! Welcome to MediCare Telehealth. How can I help you today? You can check upcoming appointments, refill active prescriptions, or request nurse triage."
+        return "Hello! How can I help you today? You can ask about our return and refund policies, track a shipment, or look up your orders."
+
+    def _deterministic_auth_required_generator(self, system_text: str, user_text: str) -> str:
+        sys_lower = system_text.lower()
+        if "apex" in sys_lower or "bank" in sys_lower:
+            return (
+                "To view, track, or manage your bank accounts and financial records, please log in to your account first. "
+                "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely access your banking details."
+            )
+        if "cloudpulse" in sys_lower or "workspace" in sys_lower:
+            return (
+                "To view, track, or manage your cloud workspaces and subscriptions, please log in to your account first. "
+                "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely access your cloud telemetry."
+            )
+        if "medicare" in sys_lower or "telehealth" in sys_lower or "appointment" in sys_lower:
+            return (
+                "To view, track, or manage your appointments and prescription records, please log in to your account first. "
+                "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely access your patient portal."
+            )
+        return (
+            "To view, track, or manage your orders and account details, please log in to your account first. "
+            "You can sign in using the **1-Click Customer Switcher** or the login form on this page to securely view your orders. "
+            "If you have general questions about our return policy or shipping procedures, feel free to ask!"
+        )
+
+

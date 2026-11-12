@@ -23,7 +23,7 @@ class PolicyValidator:
     """
 
     ENTITY_ID_REGEX = re.compile(r"\b([A-Z]{3,4}-\d{3,6})\b", re.IGNORECASE)
-    MONETARY_REGEX = re.compile(r"(?:\$|\bUSD\s*)\s*(\d+(?:\.\d{2})?)\b|\b(\d+\.\d{2})\s*(?:USD|dollars)?\b")
+    MONETARY_REGEX = re.compile(r"(?:\$|\bUSD\s*)\s*(\d[\d,]*(?:\.\d{2})?)\b|\b(\d[\d,]*\.\d{2})\s*(?:USD|dollars)?\b")
     DATE_REGEX = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
     @classmethod
@@ -58,7 +58,7 @@ class PolicyValidator:
             val_str = match_group[0] or match_group[1]
             if val_str:
                 try:
-                    mentioned_amounts.append(float(val_str))
+                    mentioned_amounts.append(float(val_str.replace(",", "")))
                 except ValueError:
                     pass
 

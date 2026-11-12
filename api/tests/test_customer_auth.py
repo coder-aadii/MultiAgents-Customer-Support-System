@@ -541,3 +541,12 @@ async def test_backward_compatibility_anonymous_widget_conversations():
         items = list_resp.json()["items"]
         assert len(items) >= 1
         assert items[0]["content"] == "What are your business hours?"
+
+
+def test_demo_showcase_jwt_verification():
+    verifier = CustomerTokenVerifier()
+    identity = verifier.verify_token("demo_jwt_cust_bank_401")
+    assert identity.customer_id == "cust_bank_401"
+    assert identity.identity_assurance_level == 2
+    assert identity.email == "cust_bank_401@showcase.demo"
+

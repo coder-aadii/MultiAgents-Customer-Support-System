@@ -38,8 +38,11 @@ class CloudPulseSaaSConnector(BaseConnector):
     def supported_entity_types(self) -> list[str]:
         return list(self._SUPPORTED_TYPES)
 
-    def _build_key(self, entity_type: str, entity_id: str) -> str:
-        return f"{entity_type.strip().lower()}:{entity_id.strip().upper()}"
+    def _build_key(self, entity_type: str, entity_id: str, customer_id: str | None = None) -> str:
+        base = f"{entity_type.strip().lower()}:{entity_id.strip().upper()}"
+        if customer_id:
+            return f"{base}:{customer_id.strip()}"
+        return base
 
     def _seed_default_fixtures(self) -> None:
         fixtures: list[dict[str, Any]] = [
@@ -133,10 +136,84 @@ class CloudPulseSaaSConnector(BaseConnector):
                     "customer_id": "cust_verified_123",
                 },
             },
+            # Showcase user_99 (Alex Rivera) fixtures
+            {
+                "entity_type": "workspace",
+                "entity_id": "WS-771a8b",
+                "customer_id": "user_99",
+                "title": "CloudPulse Workspace #WS-771a8b",
+                "summary_fields": {
+                    "name": "CloudPulse Core Cluster",
+                    "status": "active",
+                    "tier": "Enterprise",
+                    "retention_days": 90,
+                    "members_count": 35,
+                    "region": "us-east-1",
+                },
+                "raw_payload": {
+                    "workspace_id": "WS-771a8b",
+                    "customer_id": "user_99",
+                    "created_at": "2025-10-01T00:00:00Z",
+                },
+            },
+            {
+                "entity_type": "workspace",
+                "entity_id": "WS-992b1c",
+                "customer_id": "user_99",
+                "title": "CloudPulse Workspace #WS-992b1c",
+                "summary_fields": {
+                    "name": "Staging Sandbox",
+                    "status": "active",
+                    "tier": "Developer",
+                    "retention_days": 30,
+                    "members_count": 8,
+                    "region": "eu-central-1",
+                },
+                "raw_payload": {
+                    "workspace_id": "WS-992b1c",
+                    "customer_id": "user_99",
+                },
+            },
+            {
+                "entity_type": "subscription",
+                "entity_id": "SUB-2001",
+                "customer_id": "user_99",
+                "title": "CloudPulse Enterprise Subscription",
+                "summary_fields": {
+                    "status": "active",
+                    "tier": "Enterprise",
+                    "plan": "Enterprise Annual",
+                    "seats_allocated": 50,
+                    "renewal_date": "2027-01-01",
+                    "monthly_cost": 499.0,
+                },
+                "raw_payload": {
+                    "subscription_id": "SUB-2001",
+                    "customer_id": "user_99",
+                },
+            },
+            {
+                "entity_type": "api_quota",
+                "entity_id": "QUOTA-301",
+                "customer_id": "user_99",
+                "title": "Monthly Ingestion API Quota",
+                "summary_fields": {
+                    "status": "healthy",
+                    "used_percentage": 68.5,
+                    "rate_limit_per_minute": 5000,
+                    "monthly_limit": 50000000,
+                },
+                "raw_payload": {
+                    "quota_id": "QUOTA-301",
+                    "customer_id": "user_99",
+                },
+            },
         ]
         for fix in fixtures:
-            key = self._build_key(fix["entity_type"], fix["entity_id"])
-            self._records_by_key[key] = fix
+            scoped_key = self._build_key(fix["entity_type"], fix["entity_id"], fix["customer_id"])
+            self._records_by_key[scoped_key] = fix
+            generic_key = self._build_key(fix["entity_type"], fix["entity_id"])
+            self._records_by_key.setdefault(generic_key, fix)
 
     def get_capabilities(self) -> list[CapabilityDefinition]:
         return [
@@ -169,8 +246,9 @@ class CloudPulseSaaSConnector(BaseConnector):
     async def get_entity_summary(
         self, entity_type: str, entity_id: str, customer_id: str
     ) -> EntityRecord:
-        key = self._build_key(entity_type, entity_id)
-        rec = self._records_by_key.get(key)
+        scoped_key = self._build_key(entity_type, entity_id, customer_id)
+        generic_key = self._build_key(entity_type, entity_id)
+        rec = self._records_by_key.get(scoped_key) or self._records_by_key.get(generic_key)
         if not rec:
             raise EntityNotFoundError(f"Entity '{entity_id}' of type '{entity_type}' not found.")
         if rec["customer_id"] != customer_id:

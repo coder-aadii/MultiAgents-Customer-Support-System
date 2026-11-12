@@ -46,9 +46,9 @@ async def list_audit_events(
     query = TenantQueryScoper.apply_scope(query, AuditEvent)
 
     if event_type:
-        query = query.where(AuditEvent.event_type == event_type.strip())
+        query = query.where(AuditEvent.event_type.ilike(f"%{event_type.strip()}%"))
     if resource_type:
-        query = query.where(AuditEvent.resource_type == resource_type.strip())
+        query = query.where(AuditEvent.resource_type.ilike(f"%{resource_type.strip()}%"))
 
     if cursor:
         dt, item_id = decode_cursor(cursor)
@@ -92,9 +92,9 @@ async def export_audit_events(
     query = TenantQueryScoper.apply_scope(query, AuditEvent)
 
     if event_type:
-        query = query.where(AuditEvent.event_type == event_type.strip())
+        query = query.where(AuditEvent.event_type.ilike(f"%{event_type.strip()}%"))
     if resource_type:
-        query = query.where(AuditEvent.resource_type == resource_type.strip())
+        query = query.where(AuditEvent.resource_type.ilike(f"%{resource_type.strip()}%"))
 
     query = query.order_by(desc(AuditEvent.created_at)).limit(limit)
     result = await db.execute(query)

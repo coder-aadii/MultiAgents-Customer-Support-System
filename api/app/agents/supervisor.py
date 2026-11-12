@@ -223,6 +223,13 @@ class SupervisorAgent(BaseAgent):
 
         # Check for customer account / identity / profile inquiries
         if is_identity_query(normalized):
+            has_custom_entities = False
+            if entity_schema and getattr(entity_schema, "entities", None):
+                ent_names = {e.name for e in entity_schema.entities}
+                if not ent_names.issubset({"order", "shipment", "refund", "customer"}):
+                    has_custom_entities = True
+            if has_custom_entities:
+                return "universal_entity_specialist"
             return "business_data_specialist"
 
         # A conjunction between two intents is a multi-intent message: let the slow
@@ -246,10 +253,39 @@ class SupervisorAgent(BaseAgent):
             )
         )
 
+        matched_custom_entity = None
+        if entity_schema and getattr(entity_schema, "entities", None):
+            for ent in entity_schema.entities:
+                if ent.name not in ("order", "shipment", "refund", "customer"):
+                    if ent.identifier_pattern:
+                        try:
+                            if re.search(ent.identifier_pattern, message, re.I):
+                                matched_custom_entity = ent.name
+                                break
+                        except re.error:
+                            pass
+                    if any(
+                        phrase in normalized
+                        for phrase in (
+                            f"my {ent.name}",
+                            f"{ent.name} status",
+                            f"status of {ent.name}",
+                            f"status of my {ent.name}",
+                            f"where is my {ent.name}",
+                            f"check {ent.name}",
+                            f"check my {ent.name}",
+                            f"list my {ent.name}s",
+                            f"show my {ent.name}s",
+                            f"list {ent.name}s",
+                        )
+                    ):
+                        matched_custom_entity = ent.name
+                        break
+
         # Check for customer-specific record lookups (asking for own records or a
         # specific entity). Generic phrasing ("status of order", "when was order") is
         # intentionally excluded: those are definition questions, not data requests.
-        is_record_lookup = any(
+        is_record_lookup = bool(matched_custom_entity) or any(
             phrase in normalized
             for phrase in (
                 "show my",
@@ -298,6 +334,7 @@ class SupervisorAgent(BaseAgent):
         ) or (
             any(phrase in normalized for phrase in ("what is", "tell me about"))
             and not is_record_lookup
+            and not matched_custom_entity
         )
 
         domains = set()
@@ -308,35 +345,6 @@ class SupervisorAgent(BaseAgent):
         # "what is my order status" guides policy/definitions rather than performing a raw data dump).
         is_logistics = any(term in normalized for term in ("tracking", "shipment", "carrier", "delivery", "delayed"))
         is_billing = any(term in normalized for term in ("refund", "invoice", "billing", "payment", "charge"))
-
-        matched_custom_entity = None
-        if entity_schema and getattr(entity_schema, "entities", None):
-            for ent in entity_schema.entities:
-                if ent.name not in ("order", "shipment", "refund", "customer"):
-                    if ent.identifier_pattern:
-                        try:
-                            if re.search(ent.identifier_pattern, message, re.I):
-                                matched_custom_entity = ent.name
-                                break
-                        except re.error:
-                            pass
-                    if any(
-                        phrase in normalized
-                        for phrase in (
-                            f"my {ent.name}",
-                            f"{ent.name} status",
-                            f"status of {ent.name}",
-                            f"status of my {ent.name}",
-                            f"where is my {ent.name}",
-                            f"check {ent.name}",
-                            f"check my {ent.name}",
-                            f"list my {ent.name}s",
-                            f"show my {ent.name}s",
-                            f"list {ent.name}s",
-                        )
-                    ):
-                        matched_custom_entity = ent.name
-                        break
 
         if (
             is_record_lookup

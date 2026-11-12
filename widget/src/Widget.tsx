@@ -12,6 +12,10 @@ export interface WidgetConfig {
   accentColor?: string;
   title?: string;
   customerToken?: string;
+  customerName?: string;
+  customerEmail?: string;
+  orgSlug?: string;
+  welcomeMessage?: string;
 }
 
 export default function Widget({ config }: { config: WidgetConfig }) {
@@ -40,7 +44,7 @@ export default function Widget({ config }: { config: WidgetConfig }) {
   const title = config.title || t("widget.title");
 
   // In-memory API client instance
-  const [apiClient] = useState(() => createWidgetApiClient(config.apiBaseUrl));
+  const [apiClient] = useState(() => createWidgetApiClient(config.apiBaseUrl, config.orgSlug));
 
   // ---------------------------------------------------------------------------
   // 1. Session initialization
@@ -48,9 +52,11 @@ export default function Widget({ config }: { config: WidgetConfig }) {
   const initSession = useCallback(async () => {
     if (sessionInitialized) return;
     try {
-      await apiClient.createSession(
-        config.customerToken ? { customer_token: config.customerToken } : undefined
-      );
+      const sessionRes = await apiClient.createSession({
+        customer_token: config.customerToken,
+        name: config.customerName,
+        email: config.customerEmail,
+      });
       setSessionInitialized(true);
 
       // Fetch initial conversation detail
@@ -62,7 +68,7 @@ export default function Widget({ config }: { config: WidgetConfig }) {
         id: "welcome-message",
         conversation_id: conv.id,
         sender_type: "assistant",
-        content: t("widget.welcome"),
+        content: sessionRes.welcome_message || config.welcomeMessage || t("widget.welcome"),
         created_at: conv.created_at,
       };
       setMessages([welcomeMsg]);

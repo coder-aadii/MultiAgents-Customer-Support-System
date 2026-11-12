@@ -20,6 +20,9 @@ from app.gateway.base import (
     ToolTimeoutError,
     ToolValidationError,
 )
+from app.gateway.connectors.apex_bank_connector import ApexBankConnector
+from app.gateway.connectors.cloudpulse_connector import CloudPulseSaaSConnector
+from app.gateway.connectors.medicare_connector import MediCareConnector
 from app.gateway.connectors.mock_connector import MockBusinessConnector
 from app.gateway.connectors.olist_connector import OlistECommerceConnector
 from app.models.audit_event import ActorType, AuditEvent
@@ -60,8 +63,11 @@ class ToolGateway:
             # Explicit rollback or local development override
             self.register_connector(MockBusinessConnector())
         else:
-            # Default to real e-commerce connector (with mock fixtures backward compatibility)
+            # Default to all enterprise connectors across retail, SaaS, banking, and telehealth
             self.register_connector(OlistECommerceConnector())
+            self.register_connector(CloudPulseSaaSConnector())
+            self.register_connector(ApexBankConnector())
+            self.register_connector(MediCareConnector())
 
     def register_connector(self, connector: BaseConnector) -> None:
         """Registers a connector and maps its supported entity types."""
@@ -195,6 +201,40 @@ class ToolGateway:
                 f"fetching {entity_type}:{clean_entity_id}"
             )
         except EntityNotFoundError:
+            if entity_type.lower() == "customer" and clean_entity_id == verified_customer_id:
+                cust_name = getattr(session, "customer_name", None)
+                cust_email = getattr(session, "customer_email", None)
+                if db is not None and getattr(session, "visitor_id", None):
+                    from app.models.visitor import Visitor
+                    v = await db.get(Visitor, session.visitor_id)
+                    if v:
+                        cust_name = cust_name or v.name
+                        cust_email = cust_email or v.email
+                cust_name = cust_name or clean_entity_id
+                cust_email = cust_email or f"{clean_entity_id}@verified-customer.example.com"
+                entity = EntityRecord(
+                    entity_type="customer",
+                    entity_id=clean_entity_id,
+                    customer_id=clean_entity_id,
+                    title=f"Verified Customer {cust_name}",
+                    summary_fields={
+                        "customer_id": clean_entity_id,
+                        "name": cust_name,
+                        "email": cust_email,
+                        "status": "active",
+                        "ial": getattr(session, "identity_assurance_level", 2),
+                    },
+                    raw_payload={
+                        "customer_id": clean_entity_id,
+                        "name": cust_name,
+                        "email": cust_email,
+                    },
+                )
+                success = True
+                if registry is not None:
+                    record = entity.to_evidence_record_create()
+                    registry.register_record(record)
+                return entity
             error_name = "EntityNotFoundError"
             raise
         except Exception as exc:

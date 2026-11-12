@@ -119,15 +119,68 @@ class UniversalEntitySpecialistAgent(SpecialistAgent):
             tier_val = summary.get("tier")
             name_val = summary.get("name") or record.title
 
-            desc_parts = [f"{record.entity_type.replace('_', ' ').title()} #{record.entity_id}"]
-            if name_val and name_val != record.entity_id:
-                desc_parts.append(f"('{name_val}')")
-            if status_val:
-                desc_parts.append(f"is currently {status_val}")
-            if tier_val:
-                desc_parts.append(f"on the {tier_val} tier")
-
-            recommendations.append(" ".join(desc_parts) + ".")
+            if record.entity_type == "customer":
+                cname = summary.get("name") or record.entity_id
+                cemail = summary.get("email") or "unspecified"
+                recommendations.append(
+                    f"You are verified as {cname} (ID: {record.entity_id}, Email: {cemail}) with assurance level IAL 2."
+                )
+            elif record.entity_type == "account":
+                bal = summary.get("balance")
+                curr = summary.get("currency", "USD")
+                atype = summary.get("account_type", "Account")
+                bal_str = f"${bal:,.2f} {curr}" if isinstance(bal, (int, float)) else str(bal)
+                recommendations.append(
+                    f"Bank {atype} #{record.entity_id} has an available balance of {bal_str} and is currently {status_val or 'active'}."
+                )
+            elif record.entity_type == "transaction":
+                amt = summary.get("amount")
+                merch = summary.get("merchant", "Merchant")
+                recommendations.append(
+                    f"Transaction #{record.entity_id} for ${amt} at {merch} is {status_val or 'posted'}."
+                )
+            elif record.entity_type == "wire_transfer":
+                amt = summary.get("amount")
+                recip = summary.get("recipient", "Recipient")
+                recommendations.append(
+                    f"Wire transfer #{record.entity_id} of ${amt} to {recip} is currently {status_val or 'processed'}."
+                )
+            elif record.entity_type == "appointment":
+                doc = summary.get("doctor", "Clinician")
+                dt = summary.get("datetime", "scheduled time")
+                dept = summary.get("department", "Clinic")
+                recommendations.append(
+                    f"Appointment #{record.entity_id} with {doc} ({dept}) is scheduled for {dt} ({status_val or 'confirmed'})."
+                )
+            elif record.entity_type == "prescription":
+                med = summary.get("medication", "Medication")
+                dos = summary.get("dosage", "")
+                refills = summary.get("refills_remaining", 0)
+                recommendations.append(
+                    f"Prescription #{record.entity_id} for {med} ({dos}) has {refills} refill(s) remaining and is {status_val or 'active'}."
+                )
+            elif record.entity_type == "api_quota":
+                used = summary.get("used_percentage")
+                limit = summary.get("monthly_limit")
+                recommendations.append(
+                    f"API Quota #{record.entity_id} is {status_val or 'healthy'}: {used}% utilized of monthly limit {limit}."
+                )
+            elif record.entity_type == "workspace":
+                ret = summary.get("retention_days")
+                tier_str = f" on {tier_val} tier" if tier_val else ""
+                ret_str = f" with {ret}-day data retention" if ret else ""
+                recommendations.append(
+                    f"Workspace #{record.entity_id} ('{name_val}'){tier_str} is {status_val or 'active'}{ret_str}."
+                )
+            else:
+                desc_parts = [f"{record.entity_type.replace('_', ' ').title()} #{record.entity_id}"]
+                if name_val and name_val != record.entity_id:
+                    desc_parts.append(f"('{name_val}')")
+                if status_val:
+                    desc_parts.append(f"is currently {status_val}")
+                if tier_val:
+                    desc_parts.append(f"on the {tier_val} tier")
+                recommendations.append(" ".join(desc_parts) + ".")
 
         return SpecialistFindings(
             specialist=self.agent_name,

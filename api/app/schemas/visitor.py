@@ -32,6 +32,10 @@ class WidgetSessionResponse(BaseModel):
         default=None,
         description="Verified host system customer ID if authenticated (IAL 2)",
     )
+    welcome_message: str | None = Field(
+        default=None,
+        description="Configured tenant welcome message",
+    )
 
 
 class VisitorProfileUpdate(BaseModel):
