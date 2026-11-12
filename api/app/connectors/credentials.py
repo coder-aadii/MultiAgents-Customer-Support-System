@@ -24,12 +24,32 @@ SENSITIVE_FIELD_PATTERNS = re.compile(
 )
 
 
+FORBIDDEN_SYSTEM_ENV_VARS = {
+    "DATABASE_URL",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_USER",
+    "POSTGRES_DB",
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "SECRET_KEY",
+    "JWT_SECRET_KEY",
+    "FERNET_KEY",
+    "REDIS_URL",
+    "CELERY_BROKER_URL",
+    "WUKONGIM_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "TEST_DATABASE_URL",
+}
+
+
 class CredentialManager:
     """Secure credential resolver and redactor for external enterprise connectors.
 
     Enforces:
     - Zero raw credentials in logs or serialization.
-    - Safe environment variable and reference lookup.
+    - Safe environment variable and reference lookup with strict isolation from system secrets.
     - Sanitization of outbound HTTP headers and exception messages.
     """
 
@@ -37,7 +57,7 @@ class CredentialManager:
     def resolve_secret(cls, secret_reference: str) -> str:
         """Resolves secret from environment variable or reference key.
 
-        Raises ConnectorAuthError if secret is unconfigured or empty.
+        Raises ConnectorAuthError if secret is unconfigured, empty, or targets system variables.
         """
         if not secret_reference or not isinstance(secret_reference, str):
             raise ConnectorAuthError("Secret reference must be a non-empty string")
@@ -46,16 +66,31 @@ class CredentialManager:
         if clean_ref.startswith("env:"):
             clean_ref = clean_ref[4:]
 
-        # Lookup exact name, uppercase name, or CONNECTOR_<REF>
-        candidates = [
-            clean_ref,
-            clean_ref.upper(),
-            f"CONNECTOR_{clean_ref.upper()}",
-            f"CONNECTOR_{clean_ref.upper()}_SECRET",
-            f"CONNECTOR_{clean_ref.upper()}_API_KEY",
-        ]
+        upper_ref = clean_ref.upper()
+        if upper_ref in FORBIDDEN_SYSTEM_ENV_VARS or any(
+            upper_ref.startswith(prefix)
+            for prefix in ("POSTGRES_", "DATABASE_", "JWT_", "FERNET_", "REDIS_", "CELERY_")
+        ):
+            raise ConnectorAuthError(
+                f"Access denied: secret reference '{secret_reference}' attempts to access forbidden system configuration."
+            )
+
+        # Lookup candidate names strictly scoped to connectors
+        candidates: list[str] = []
+        if upper_ref.startswith("CONNECTOR_") or upper_ref.startswith("EXT_"):
+            candidates.append(clean_ref)
+            candidates.append(upper_ref)
+        else:
+            candidates.extend([
+                f"CONNECTOR_{upper_ref}",
+                f"CONNECTOR_{upper_ref}_SECRET",
+                f"CONNECTOR_{upper_ref}_API_KEY",
+                f"EXT_{upper_ref}",
+            ])
 
         for cand in candidates:
+            if cand.upper() in FORBIDDEN_SYSTEM_ENV_VARS:
+                continue
             val = os.getenv(cand)
             if val and val.strip():
                 return val.strip()

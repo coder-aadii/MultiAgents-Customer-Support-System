@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "../hooks/useTranslation";
-import { getAuditEvents, type AuditEventItem } from "../api/client";
+import { getAuditEvents, type AuditEventItem, apiClient } from "../api/client";
 import { toSafeErrorMessage } from "../utils/errors";
 import { LoadingState, EmptyState, ErrorState } from "../components/common/UIStates";
 
@@ -10,6 +10,7 @@ export default function Audit() {
   const [events, setEvents] = useState<AuditEventItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   // Pagination state (cursor stack for backward/forward navigation)
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -68,6 +69,30 @@ export default function Audit() {
     }
   };
 
+  const handleExport = async (format: "csv" | "json") => {
+    try {
+      setExporting(true);
+      const res = await apiClient.get(`/audit/export?format=${format}`, {
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], {
+        type: format === "csv" ? "text/csv" : "application/json",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-export.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error("Export failed", err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const getActorBadge = (actorType: string) => {
     switch (actorType) {
       case "user":
@@ -82,8 +107,8 @@ export default function Audit() {
   };
 
   const getEventBadge = (eventType: string) => {
-    if (eventType.startsWith("auth.")) return "bg-amber-50 text-amber-700 border-amber-200";
-    if (eventType.startsWith("tool.")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (eventType.startsWith("auth.") || eventType.startsWith("security.")) return "bg-amber-50 text-amber-700 border-amber-200";
+    if (eventType.startsWith("tool.") || eventType.startsWith("connector.")) return "bg-emerald-50 text-emerald-700 border-emerald-200";
     if (eventType.startsWith("handoff.")) return "bg-rose-50 text-rose-700 border-rose-200";
     return "bg-sky-50 text-sky-700 border-sky-200";
   };
@@ -94,20 +119,38 @@ export default function Audit() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{t("audit.title")}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Immutable platform and security telemetry journal for audits and compliance.
+            Immutable platform and security telemetry journal for compliance and verification.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => fetchEvents(cursor)}
-          className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none"
-        >
-          ↻ Refresh
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => handleExport("csv")}
+            disabled={exporting}
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-xs text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none disabled:opacity-50"
+          >
+            📥 Export CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("json")}
+            disabled={exporting}
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-xs text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none disabled:opacity-50"
+          >
+            📥 Export JSON
+          </button>
+          <button
+            type="button"
+            onClick={() => fetchEvents(cursor)}
+            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-xs text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none"
+          >
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filter Bar */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm flex flex-wrap gap-4 items-center">
+      <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-xs flex flex-wrap gap-4 items-center">
         <div className="w-full sm:w-64">
           <label htmlFor="filterEventType" className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">
             {t("audit.eventType")}
@@ -118,7 +161,7 @@ export default function Audit() {
             value={eventTypeFilter}
             onChange={(e) => setEventTypeFilter(e.target.value)}
             placeholder="e.g. auth.login, message.create"
-            className="w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border focus:ring-blue-500 focus:border-blue-500"
+            className="w-full rounded-md border-gray-300 shadow-xs text-sm p-2 border focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
         <div className="w-full sm:w-64">
@@ -131,7 +174,7 @@ export default function Audit() {
             value={resourceTypeFilter}
             onChange={(e) => setResourceTypeFilter(e.target.value)}
             placeholder="e.g. conversation, message, tool"
-            className="w-full rounded-md border-gray-300 shadow-sm text-sm p-2 border focus:ring-blue-500 focus:border-blue-500"
+            className="w-full rounded-md border-gray-300 shadow-xs text-sm p-2 border focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
         {(eventTypeFilter || resourceTypeFilter) && (
@@ -151,7 +194,7 @@ export default function Audit() {
       </div>
 
       {/* Audit Log Table */}
-      <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-lg border border-gray-200 shadow-xs overflow-hidden">
         {loading && events.length === 0 ? (
           <div className="p-8">
             <LoadingState message="Loading audit events..." />
@@ -162,58 +205,77 @@ export default function Audit() {
           </div>
         ) : events.length === 0 ? (
           <div className="p-8">
-            <EmptyState description="No security audit events match the selected filters." />
+            <EmptyState
+              title={t("audit.empty")}
+              description="No audit events matched your filter criteria."
+            />
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
-              <thead className="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
                 <tr>
-                  <th scope="col" className="px-6 py-3">{t("audit.timestamp")}</th>
-                  <th scope="col" className="px-6 py-3">{t("audit.eventType")}</th>
-                  <th scope="col" className="px-6 py-3">{t("audit.actor")}</th>
-                  <th scope="col" className="px-6 py-3">{t("audit.resource")}</th>
-                  <th scope="col" className="px-6 py-3 text-right">Action</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("audit.timestamp")}
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("audit.actor")}
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("audit.eventType")}
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    {t("audit.resource")}
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Metadata Preview
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Details
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {events.map((ev) => (
-                  <tr key={ev.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-500 font-mono text-xs">
-                      {new Date(ev.created_at).toLocaleString()}
+                {events.map((evt) => (
+                  <tr
+                    key={evt.id}
+                    onClick={() => setSelectedEvent(evt)}
+                    className="hover:bg-gray-50 cursor-pointer transition-colors"
+                  >
+                    <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-600 font-mono">
+                      {new Date(evt.created_at).toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${getEventBadge(ev.event_type)}`}>
-                        {ev.event_type}
+                    <td className="px-6 py-4 whitespace-nowrap text-xs">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${getActorBadge(evt.actor_type)}`}>
+                        {evt.actor_type}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center space-x-2">
-                        <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium border ${getActorBadge(ev.actor_type)}`}>
-                          {ev.actor_type}
-                        </span>
-                        {ev.actor_id && (
-                          <span className="text-gray-400 font-mono text-xs" title={ev.actor_id}>
-                            {ev.actor_id.slice(0, 8)}...
-                          </span>
-                        )}
-                      </div>
+                    <td className="px-6 py-4 whitespace-nowrap text-xs">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${getEventBadge(evt.event_type)}`}>
+                        {evt.event_type}
+                      </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-700">
-                      <span className="font-medium text-xs text-gray-900">{ev.resource_type}</span>
-                      {ev.resource_id && (
-                        <span className="ml-1 text-gray-400 font-mono text-xs" title={ev.resource_id}>
-                          #{ev.resource_id.slice(0, 8)}
+                    <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-700">
+                      <span className="font-medium text-gray-900">{evt.resource_type}</span>
+                      {evt.resource_id && (
+                        <span className="text-gray-400 font-mono text-[11px] block truncate max-w-[120px]">
+                          {evt.resource_id}
                         </span>
                       )}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-gray-500 max-w-xs truncate font-mono">
+                      {evt.metadata ? JSON.stringify(evt.metadata) : "-"}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-xs font-medium">
                       <button
                         type="button"
-                        onClick={() => setSelectedEvent(ev)}
-                        className="text-blue-600 hover:text-blue-900 font-semibold"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEvent(evt);
+                        }}
+                        className="text-blue-600 hover:text-blue-900"
                       >
-                        View Details
+                        Inspect Trace
                       </button>
                     </td>
                   </tr>
@@ -249,7 +311,7 @@ export default function Audit() {
         </div>
       </div>
 
-      {/* Details Modal */}
+      {/* Details & Visual Timeline Modal */}
       {selectedEvent && (
         <div
           role="dialog"
@@ -258,8 +320,11 @@ export default function Audit() {
         >
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b pb-3">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Audit Event Details
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <span>🛡️ Audit Event Timeline Trace</span>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${getEventBadge(selectedEvent.event_type)}`}>
+                  {selectedEvent.event_type}
+                </span>
               </h3>
               <button
                 type="button"
@@ -269,7 +334,8 @@ export default function Audit() {
                 ×
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-4 text-xs">
+
+            <div className="grid grid-cols-2 gap-4 text-xs bg-gray-50 p-3 rounded-md border border-gray-200">
               <div>
                 <span className="font-medium text-gray-500">Event ID:</span>
                 <p className="font-mono text-gray-800 break-all">{selectedEvent.id}</p>
@@ -279,31 +345,68 @@ export default function Audit() {
                 <p className="text-gray-800">{new Date(selectedEvent.created_at).toISOString()}</p>
               </div>
               <div>
-                <span className="font-medium text-gray-500">Event Type:</span>
-                <p className="font-semibold text-gray-800">{selectedEvent.event_type}</p>
-              </div>
-              <div>
                 <span className="font-medium text-gray-500">Actor:</span>
-                <p className="text-gray-800">{selectedEvent.actor_type} ({selectedEvent.actor_id || "none"})</p>
+                <p className="text-gray-800">
+                  <span className="font-semibold">{selectedEvent.actor_type}</span>{" "}
+                  {selectedEvent.actor_id && <span className="font-mono text-[11px]">({selectedEvent.actor_id})</span>}
+                </p>
               </div>
               <div>
                 <span className="font-medium text-gray-500">Resource:</span>
-                <p className="text-gray-800">{selectedEvent.resource_type} ({selectedEvent.resource_id || "none"})</p>
+                <p className="text-gray-800">
+                  <span className="font-semibold">{selectedEvent.resource_type}</span>{" "}
+                  {selectedEvent.resource_id && <span className="font-mono text-[11px]">({selectedEvent.resource_id})</span>}
+                </p>
               </div>
             </div>
+
+            {/* Visual Reasoning Trace Breakdown */}
+            {selectedEvent.metadata && (
+              <div className="space-y-2">
+                <span className="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                  Trace & Grounding Analysis:
+                </span>
+                {(() => {
+                  const meta = selectedEvent.metadata as Record<string, any>;
+                  return (
+                    <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs space-y-1 text-blue-900">
+                      {meta.action ? (
+                        <div><b>Executed Action:</b> <code className="bg-blue-100 px-1 py-0.5 rounded">{String(meta.action)}</code></div>
+                      ) : null}
+                      {meta.customer_id ? (
+                        <div><b>Verified Customer:</b> <code className="bg-blue-100 px-1 py-0.5 rounded">{String(meta.customer_id)}</code></div>
+                      ) : null}
+                      {meta.ial !== undefined ? (
+                        <div><b>Identity Assurance Level:</b> <span className="font-semibold">IAL {String(meta.ial)}</span></div>
+                      ) : null}
+                      {meta.channel ? (
+                        <div><b>Client Ingress Channel:</b> {String(meta.channel)}</div>
+                      ) : null}
+                      {meta.reason ? (
+                        <div><b>Routing Reason:</b> {String(meta.reason)}</div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             <div>
-              <span className="block text-xs font-medium text-gray-500 mb-1">Sanitized Metadata:</span>
-              <pre className="bg-gray-900 text-gray-100 rounded-md p-3 text-xs overflow-x-auto font-mono max-h-64">
+              <span className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1">
+                Raw Cryptographic Metadata:
+              </span>
+              <pre className="bg-gray-900 text-gray-100 rounded-md p-3 text-xs overflow-x-auto font-mono max-h-56">
                 {JSON.stringify(selectedEvent.metadata || {}, null, 2)}
               </pre>
             </div>
+
             <div className="flex justify-end pt-2">
               <button
                 type="button"
                 onClick={() => setSelectedEvent(null)}
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-md"
               >
-                Close
+                Close Trace
               </button>
             </div>
           </div>

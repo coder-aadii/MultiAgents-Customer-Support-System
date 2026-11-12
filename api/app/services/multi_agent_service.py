@@ -36,6 +36,7 @@ from app.services.assistant_service import (
     OUT_OF_SCOPE_MESSAGE_TEXT,
     create_or_reuse_handoff,
 )
+from app.services.context_compactor import ContextAutoCompactor
 
 
 async def _has_active_handoff(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
@@ -226,11 +227,28 @@ async def handle_multi_agent_pipeline(
     if entity_schema is None:
         entity_schema = get_default_olist_entity_schema()
 
+    # Load conversation history and compact multi-turn memory
+    msg_stmt = (
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+    )
+    msg_rows = await db.execute(msg_stmt)
+    history_messages = list(msg_rows.scalars().all())
+    compacted_memory, _ = ContextAutoCompactor.compact_conversation_history(
+        history_messages, entity_schema=entity_schema
+    )
+    memory_entities = compacted_memory.extracted_entities if compacted_memory else {}
+
     context = AgentContext(
         tenant_id=conversation.organization_id,
         conversation_id=conversation_id,
         execution_phase="supervisor",
-        payload={"user_message": visitor_message_content, "entity_schema": entity_schema.model_dump(mode="json")},
+        payload={
+            "user_message": visitor_message_content,
+            "entity_schema": entity_schema.model_dump(mode="json"),
+            "compacted_memory": compacted_memory.model_dump(mode="json") if compacted_memory else None,
+        },
         verified_customer_id=session.verified_customer_id if session else None,
         db=db,
         visitor_session=session,
@@ -253,7 +271,7 @@ async def handle_multi_agent_pipeline(
     if decision.outcome is PlanningOutcome.handoff:
         return await _handoff(db, conversation, f"supervisor:{decision.reason}")
     plan = decision.plan if decision.outcome is PlanningOutcome.plan else _fast_path_plan(decision.target_agent, visitor_message_content)
-    plan = _resolve_task_inputs(plan, visitor_message_content, entity_schema=entity_schema) if plan is not None else None
+    plan = _resolve_task_inputs(plan, visitor_message_content, entity_schema=entity_schema, memory_entities=memory_entities) if plan is not None else None
     if plan is None:
         return await _handoff(db, conversation, "invalid_supervisor_fast_path")
 
@@ -328,6 +346,7 @@ class DynamicTaskInputResolver:
         plan: InvestigationPlan,
         message: str,
         entity_schema: Any = None,
+        memory_entities: dict[str, str] | None = None,
     ) -> InvestigationPlan | None:
         from app.schemas.entities import OrganizationEntitySchema, get_default_olist_entity_schema
 
@@ -351,8 +370,8 @@ class DynamicTaskInputResolver:
                 return val.upper()
             return val
 
-        # Extract all matched entity IDs from message
-        matched_entities: dict[str, str] = {}
+        # Extract all matched entity IDs from message, falling back to earlier memory entities
+        matched_entities: dict[str, str] = dict(memory_entities or {})
         for ent_name, pat in patterns.items():
             m = match(pat)
             if m:
@@ -391,31 +410,31 @@ class DynamicTaskInputResolver:
                 else:
                     inputs.setdefault("entity_type", "order")
                     order_pat = patterns.get("order", _ORDER_ID)
-                    order_id = match(order_pat)
+                    order_id = match(order_pat) or matched_entities.get("order") or matched_entities.get("order_id")
                     if order_id:
                         inputs["entity_id"] = order_id.lstrip("#")
 
             elif agent == "logistics_specialist":
                 shipment_pat = patterns.get("shipment", _SHIPMENT_ID)
-                shipment_id = match(shipment_pat)
+                shipment_id = match(shipment_pat) or matched_entities.get("shipment") or matched_entities.get("tracking_number")
                 order_pat = patterns.get("order", _ORDER_ID)
+                order_id_cand = match(order_pat) or matched_entities.get("order") or matched_entities.get("order_id")
                 if shipment_id is not None:
                     inputs["entity_id"] = shipment_id
-                elif "order" in message.lower() or match(order_pat):
+                elif "order" in message.lower() or match(order_pat) or order_id_cand:
                     task = task.model_copy(update={
                         "assigned_agent": "business_data_specialist",
                         "task_description": "Investigate order and shipment status using authorized read-only data.",
                     })
                     inputs["entity_type"] = "order"
-                    order_id = match(order_pat)
-                    if order_id:
-                        inputs["entity_id"] = order_id.lstrip("#")
+                    if order_id_cand:
+                        inputs["entity_id"] = order_id_cand.lstrip("#")
                 else:
                     return None
 
             elif agent == "billing_specialist":
                 refund_pat = patterns.get("refund", _REFUND_ID)
-                refund_id = match(refund_pat)
+                refund_id = match(refund_pat) or matched_entities.get("refund")
                 if refund_id is None:
                     return None
                 inputs["refund_id"] = refund_id
@@ -429,9 +448,12 @@ def _resolve_task_inputs(
     plan: InvestigationPlan,
     message: str,
     entity_schema: Any = None,
+    memory_entities: dict[str, str] | None = None,
 ) -> InvestigationPlan | None:
     """Inject and validate server-derived IDs; never ask a planner to invent them."""
-    return DynamicTaskInputResolver.resolve(plan, message, entity_schema=entity_schema)
+    return DynamicTaskInputResolver.resolve(
+        plan, message, entity_schema=entity_schema, memory_entities=memory_entities
+    )
 
 
 async def _persist_response(

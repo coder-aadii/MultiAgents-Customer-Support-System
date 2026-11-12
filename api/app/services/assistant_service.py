@@ -42,6 +42,7 @@ from app.services.conversation_service import record_audit
 from app.services.evidence_service import record_evidence, to_public_evidence_reference
 from app.services.policy_validator import PolicyValidator
 from app.services.retrieval_service import retrieve_knowledge_chunks
+from app.services.context_compactor import ContextAutoCompactor
 from app.services.template_engine import TemplateEngine
 from app.services.triage_service import classify_message
 
@@ -195,9 +196,14 @@ async def generate_grounded_answer(
         LLMMessage(role="system", content=sources_text.strip()),
     ]
 
+    # Auto-compact older conversation history when exceeding message thresholds
+    compacted_memory, recent_messages = ContextAutoCompactor.compact_conversation_history(history_messages)
+    if compacted_memory:
+        llm_messages.append(LLMMessage(role="system", content=compacted_memory.format_system_context_block()))
+
     total_chars = 0
     bounded_history: list[LLMMessage] = []
-    for msg in reversed(history_messages):
+    for msg in reversed(recent_messages):
         content = msg.content.strip()
         if total_chars + len(content) > MAX_HISTORY_CHARS and bounded_history:
             break

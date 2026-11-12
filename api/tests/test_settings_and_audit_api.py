@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.database import async_session_factory
 from app.main import app
-from app.models.audit_event import AuditEvent
+from app.models.audit_event import ActorType, AuditEvent
 from app.models.organization import Organization, OrganizationMembership, OrgMemberRole
 from app.models.user import User, UserRole
 from app.models.widget_settings import WidgetSettings
@@ -74,28 +74,34 @@ async def test_widget_settings_and_audit_security_lifecycle():
         audit_a1 = AuditEvent(
             id=uuid.uuid4(),
             organization_id=org_a.id,
+            actor_type=ActorType.user,
+            actor_id=admin_a.id,
             event_type="security.login",
             resource_type="user",
-            resource_id=str(admin_a.id),
-            action="login",
+            resource_id=admin_a.id,
+            metadata_json={"action": "login"},
             created_at=datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
         )
         audit_a2 = AuditEvent(
             id=uuid.uuid4(),
             organization_id=org_a.id,
+            actor_type=ActorType.user,
+            actor_id=admin_a.id,
             event_type="settings.update",
             resource_type="widget",
-            resource_id="widget_1",
-            action="update",
+            resource_id=uuid.uuid4(),
+            metadata_json={"action": "update"},
             created_at=datetime(2026, 1, 1, 11, 0, tzinfo=UTC),
         )
         audit_b1 = AuditEvent(
             id=uuid.uuid4(),
             organization_id=org_b.id,
+            actor_type=ActorType.user,
+            actor_id=uuid.uuid4(),
             event_type="security.leak",
             resource_type="user",
-            resource_id=str(uuid.uuid4()),
-            action="login",
+            resource_id=uuid.uuid4(),
+            metadata_json={"action": "login"},
             created_at=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
         )
         db.add_all([audit_a1, audit_a2, audit_b1])

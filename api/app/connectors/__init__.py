@@ -12,6 +12,11 @@ from app.connectors.base import (
     HealthStatus,
 )
 from app.connectors.credentials import CredentialManager
+from app.connectors.distributed_resilience import (
+    RedisConnectionPool,
+    RedisDistributedCircuitBreaker,
+    RedisDistributedRateLimiter,
+)
 from app.connectors.graphql import GraphQLEnterpriseConnector
 from app.connectors.registry import ConnectorRegistry, default_connector_registry
 from app.connectors.resilience import CircuitBreaker, CircuitState, TokenBucketRateLimiter
@@ -37,6 +42,9 @@ __all__ = [
     "CircuitBreaker",
     "CircuitState",
     "TokenBucketRateLimiter",
+    "RedisDistributedCircuitBreaker",
+    "RedisDistributedRateLimiter",
+    "RedisConnectionPool",
     "RestEnterpriseConnector",
     "SqlEnterpriseConnector",
     "GraphQLEnterpriseConnector",

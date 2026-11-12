@@ -20,6 +20,7 @@ class OrgMemberRole(str, enum.Enum):
     admin = "admin"
     supervisor = "supervisor"
     agent = "agent"
+    auditor = "auditor"
 
 
 class Organization(Base):

@@ -191,3 +191,88 @@ class TestConnectorsApi:
             )
             assert res_delete.status_code == 200
             assert res_delete.json()["status"] == "deleted"
+
+    async def test_connectors_rbac_and_secret_probing_prevention(self):
+        org_id = uuid.uuid4()
+        async with async_session_factory() as db_session:
+            org = Organization(
+                id=org_id,
+                slug=f"rbac-{uuid.uuid4().hex[:8]}",
+                name="RBAC Org",
+                is_active=True,
+            )
+            db_session.add(org)
+
+            agent_user = User(
+                id=uuid.uuid4(),
+                organization_id=org_id,
+                email=f"agent-{uuid.uuid4().hex[:8]}@example.com",
+                display_name="Support Agent",
+                password_hash=hash_password("password123"),
+                role=UserRole.staff,
+                is_active=True,
+            )
+            admin_user = User(
+                id=uuid.uuid4(),
+                organization_id=org_id,
+                email=f"admin-{uuid.uuid4().hex[:8]}@example.com",
+                display_name="Tenant Admin",
+                password_hash=hash_password("password123"),
+                role=UserRole.admin,
+                is_active=True,
+            )
+            db_session.add_all([agent_user, admin_user])
+            await db_session.flush()
+
+            from app.models.organization import OrganizationMembership, OrgMemberRole
+            mem_agent = OrganizationMembership(
+                organization_id=org_id,
+                user_id=agent_user.id,
+                role=OrgMemberRole.agent.value,
+                permissions=[],
+            )
+            db_session.add(mem_agent)
+            await db_session.commit()
+
+        agent_token = create_access_jwt(subject=str(agent_user.id), role="staff", org_id=str(org_id))
+        admin_token = create_access_jwt(subject=str(admin_user.id), role="admin", org_id=str(org_id))
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # 1. Agent cannot create connector (403 Forbidden)
+            res_agent_create = await client.post(
+                "/api/v1/connectors",
+                headers={"Authorization": f"Bearer {agent_token}"},
+                json={
+                    "name": "agent_connector",
+                    "connector_type": "rest",
+                    "base_url": "https://8.8.8.8",
+                    "auth_type": "none",
+                },
+            )
+            assert res_agent_create.status_code == 403
+            assert "lacks grant" in res_agent_create.text
+
+            # 2. Agent cannot test connection (403 Forbidden)
+            res_agent_test = await client.post(
+                "/api/v1/connectors/test-connection",
+                headers={"Authorization": f"Bearer {agent_token}"},
+                json={"base_url": "https://8.8.8.8"},
+            )
+            assert res_agent_test.status_code == 403
+
+            # 3. Probing forbidden system secrets (DATABASE_URL, POSTGRES_PASSWORD) is blocked
+            res_probe = await client.post(
+                "/api/v1/connectors/test-connection",
+                headers={"Authorization": f"Bearer {admin_token}"},
+                json={
+                    "base_url": "https://8.8.8.8",
+                    "auth_type": "bearer",
+                    "secret_reference": "DATABASE_URL",
+                },
+            )
+            assert res_probe.status_code == 200
+            data = res_probe.json()
+            assert data["success"] is False
+            assert data["error_type"] == "AUTH_ERROR"
+            assert "forbidden system configuration" in data["message"]

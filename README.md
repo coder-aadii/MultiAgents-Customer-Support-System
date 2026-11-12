@@ -68,8 +68,9 @@ docker compose --profile expanded up -d
 | Service | Endpoint | Description |
 |:---|:---|:---|
 | **API** | `http://localhost:8000` | FastAPI backend & OpenAPI documentation (`/docs`) |
-| **Admin Web** | `http://localhost:5173` | React 19 agent workspace & management console |
-| **Widget Demo** | `http://localhost:5174` | Embeddable customer chat widget demo surface |
+| **Headless API** | `http://localhost:8000/api/v2/headless` | Headless conversation API with SSE token streaming |
+| **Admin Web** | `http://localhost:5173` | React 19 agent workspace, connectors UI & audit visualizer |
+| **Widget Demo** | `http://localhost:5174` | Embeddable widget testbed & multi-industry showcase |
 | **PostgreSQL** | `localhost:55432` | PostgreSQL 16 database with `pgvector` extension |
 
 ### Health Verification
@@ -83,21 +84,38 @@ curl -fsS http://localhost:8000/readyz    # {"status":"ok"} (verifies database c
 
 ## ✨ Features
 
-### 🤖 AI Agent Orchestration & Grounded Triage
-- **Intent Triage Engine** — Automatically classifies incoming requests into policy FAQs, transactional account queries, or human agent escalations.
+### 🤖 Universal AI Agent Orchestration & Grounded Triage
+- **Schema-Driven Dynamic Supervisor** — Plans multi-agent investigation graphs parameterized dynamically by active tenant business entity schemas (e-commerce orders, SaaS workspaces, banking accounts, healthcare patients).
+- **Universal Capability Specialists** — `UniversalEntitySpecialistAgent` querying arbitrary tenant entity metamodels with dynamic JSON-Schema generation; preserves legacy domain adapters.
+- **Dynamic Reflection Critic** — Decoupled verification loop validating completeness against active tenant schemas, citations, and ground-truth evidence before customer response delivery.
+- **Context Auto-Compactor & Rolling Memory** — Automated compaction maintaining full conversational recall across 50+ turn threads while bounding per-turn prompts below 2,000 tokens.
 - **Strict Hallucination Fencing** — Answers strictly grounded in retrieved evidence; ungrounded or ambiguous queries trigger safe handoff.
 - **Configurable LLM Backends** — Connects to any OpenAI-compatible Chat Completions API with fallback to built-in deterministic test providers.
-- **Streaming & Memory** — Multi-turn conversation context tracking with low-latency response delivery.
+
+### 🔌 Declarative Connectors, SSRF Defense & Headless Transport
+- **Declarative Enterprise Connectors** — Standardized connectors across REST, GraphQL, and SQL databases configurable directly via the Admin Web UI.
+- **Strict SSRF Protection Gate** — Validates all outbound connector destinations at runtime, blocking loopbacks (`127.0.0.0/8`), link-local/cloud metadata (`169.254.169.254`), CG-NAT (`100.64.0.0/10`), and private RFC 1918 subnets.
+- **Headless Conversation API & Real-Time SSE Streaming** — Server-Sent Events (`/api/v2/headless/conversations/{id}/messages/stream`) streaming real-time tokens for custom web and mobile integrations.
+- **Customer Identity Token Exchange** — Dedicated exchange endpoint (`POST /api/v2/auth/customer-session-exchange`) elevating anonymous IAL 0 sessions to cryptographically verified IAL 2 sessions.
+- **Multi-Industry Demonstration Showcase** — Interactive switcher testbed demonstrating live query execution and metamodels across E-Commerce, SaaS (CloudPulse), Banking (Apex Bank), and Healthcare (MediCare).
+
+### ⚡ Distributed Resilience & Enterprise Scalability
+- **Redis Distributed Circuit Breakers** — Cluster-wide failure tracking with atomic Lua state transitions (`CLOSED` -> `OPEN` -> `HALF_OPEN`), thundering-herd trial probe leasing, and in-memory fallbacks.
+- **Global Sliding-Window Rate Limiting** — Multi-token rate limiter backed by Redis sorted sets protecting upstream enterprise endpoints.
+- **Two-Phase Action Execution & Human Confirmation** — High-impact business actions automatically route to the pending actions approval queue (`/actions/pending`).
+- **Cryptographic Idempotency** — Action execution enforces unique idempotency keys to eliminate duplicate transactions.
+
+### 🛡️ Enterprise Security, RBAC & Compliance Audit
+- **Tenant Scoping & Trusted Authorization** — Organization identity strictly derived from cryptographically verified user JWT claims; unauthenticated header spoofing rejected.
+- **Fine-Grained Permission Matrix & Auditor Role** — Enterprise permissions (`conversations:read/write`, `actions:approve`, `knowledge:publish`, `audit:read/export`, `connectors:manage`) with dedicated `auditor` role.
+- **Visual Audit Trace Timeline** — Interactive audit modal in Admin Web displaying agent reasoning traces, retrieved citations, and actor attribution.
+- **Compliance Audit Exports** — Export tamper-evident audit journals in CSV or JSON format with spreadsheet formula injection neutralization.
 
 ### 📚 Knowledge Base & Semantic Search (RAG)
 - **Document Ingestion Pipeline** — Ingest `.md`, `.txt`, and documentation files with automated sliding-window chunking (~700 tokens).
 - **Native Vector Indexing** — High-performance vector storage powered by PostgreSQL 16 and `pgvector` with HNSW cosine distance indexing.
 - **Verifiable Citations** — Generated answers include citation chips linking directly to source passages and confidence scores.
 - **Knowledge Admin Console** — Full management interface to upload, review, publish, and test semantic retrieval against chunks.
-
-### 🔌 Enterprise Connectors & Controlled Actions
-- **Pluggable Connectors** — Standardized adapters for external enterprise backends across REST, GraphQL, and SQL databases.
-- **Two-Phase Action Execution** — Safely perform operations (such as order status lookups, cancellations, or address modifications).
 - **Human-in-the-Loop Approval Gate** — High-risk actions automatically route to the pending actions approval queue (`/actions/pending`).
 - **Cryptographic Idempotency** — Action execution enforces unique idempotency keys to eliminate duplicate transactions.
 

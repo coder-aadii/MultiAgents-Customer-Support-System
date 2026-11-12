@@ -64,7 +64,7 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         allowed_fields: set[str] | None = None,
         custom_client: httpx.AsyncClient | None = None,
         operations_config: dict[str, Any] | None = None,
-        enforce_ssrf: bool = True,
+        enforce_ssrf: bool | None = None,
     ) -> None:
         self._name = connector_name
         self.base_url = base_url.rstrip("/")
@@ -76,7 +76,7 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
         self._client = custom_client
         self._internal_client: httpx.AsyncClient | None = None
         self.operations_config = operations_config or {}
-        self.enforce_ssrf = enforce_ssrf
+        self.enforce_ssrf = (custom_client is None) if enforce_ssrf is None else enforce_ssrf
 
     async def _get_client(self, timeout_seconds: float) -> httpx.AsyncClient:
         if self._client:
@@ -213,6 +213,9 @@ class RestEnterpriseConnector(BaseEnterpriseConnector):
             raise ConnectorValidationError(f"Unsupported operation '{operation}'")
 
         full_url = f"{self.base_url}{path}"
+
+        if self.enforce_ssrf:
+            SSRFProtectionGate.validate_target_url(full_url)
 
         client = await self._get_client(timeout_seconds=timeout_seconds)
         try:

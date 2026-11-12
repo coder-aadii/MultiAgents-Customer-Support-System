@@ -14,7 +14,7 @@ from app.connectors.ssrf import SSRFProtectionGate, SSRFSecurityViolationError
 from app.database import get_session
 from app.dependencies import require_staff
 from app.models.connector_definition import ConnectorDefinition
-from app.models.organization import Organization
+from app.models.organization import Organization, OrganizationMembership
 from app.models.user import User
 from app.schemas.connector import (
     ConnectorCreate,
@@ -24,6 +24,7 @@ from app.schemas.connector import (
     ConnectorUpdate,
 )
 from app.tenancy.filter import TenantQueryScoper
+from app.tenancy.rbac import PERM_CONNECTORS_MANAGE, require_permission
 from app.tenancy.resolver import resolve_tenant
 
 connectors_router = APIRouter(prefix="/connectors", tags=["connectors"])
@@ -46,8 +47,8 @@ async def list_connectors(
 @connectors_router.post("", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)
 async def create_connector(
     payload: ConnectorCreate,
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(require_permission(PERM_CONNECTORS_MANAGE)),
     db: AsyncSession = Depends(get_session),
 ) -> ConnectorResponse:
     """Register a new external connector with SSRF verification."""
@@ -117,8 +118,8 @@ async def get_connector(
 async def update_connector(
     connector_id: uuid.UUID,
     payload: ConnectorUpdate,
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(require_permission(PERM_CONNECTORS_MANAGE)),
     db: AsyncSession = Depends(get_session),
 ) -> ConnectorResponse:
     """Update external connector configuration with SSRF verification."""
@@ -165,8 +166,8 @@ async def update_connector(
 @connectors_router.delete("/{connector_id}", status_code=status.HTTP_200_OK)
 async def delete_connector(
     connector_id: uuid.UUID,
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(require_permission(PERM_CONNECTORS_MANAGE)),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
     """Delete an external connector configuration."""
@@ -188,8 +189,8 @@ async def delete_connector(
 @connectors_router.post("/test-connection", response_model=ConnectorTestResponse)
 async def test_connector_connection(
     payload: ConnectorTestRequest,
-    current_user: User = Depends(require_staff),
     org: Organization = Depends(resolve_tenant),
+    _membership: OrganizationMembership = Depends(require_permission(PERM_CONNECTORS_MANAGE)),
 ) -> ConnectorTestResponse:
     """Validates destination against SSRF gate and attempts health ping."""
     start_time = time.perf_counter()
@@ -217,9 +218,14 @@ async def test_connector_connection(
                 headers["X-Api-Key"] = secret
             elif payload.auth_type == "basic":
                 headers["Authorization"] = f"Basic {secret}"
-        except Exception:
-            # Fallback if secret not in env
-            pass
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            return ConnectorTestResponse(
+                success=False,
+                message=f"Secret resolution failed: {exc}",
+                latency_ms=elapsed_ms,
+                error_type="AUTH_ERROR",
+            )
 
     # 3. Ping
     target_url = f"{payload.base_url.rstrip('/')}/health"

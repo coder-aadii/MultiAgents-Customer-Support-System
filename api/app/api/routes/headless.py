@@ -16,6 +16,7 @@ from app.common.rate_limit import rate_limit_visitor_message
 from app.config import settings
 from app.database import async_session_factory, get_session
 from app.dependencies import get_visitor_session
+from app.models.assistant_job import AssistantJob, AssistantJobStatus
 from app.models.audit_event import ActorType, AuditEvent
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.message import Message, SenderType
@@ -208,11 +209,19 @@ async def stream_headless_message(
         sender_user_id=None,
     )
 
-    job = await enqueue_job(
-        db=db,
+    # 2. Register job in 'running' state with lock attribution so background workers do not double-execute
+    job = AssistantJob(
+        organization_id=session.organization_id,
         conversation_id=conversation_id,
         message_id=msg.id,
+        status=AssistantJobStatus.running.value,
+        locked_at=datetime.now(UTC),
+        locked_by=f"headless_sse_{msg.id}",
+        attempts=1,
+        max_attempts=2,
+        created_at=datetime.now(UTC),
     )
+    db.add(job)
     await db.commit()
 
     session_org_id = session.organization_id
@@ -248,6 +257,14 @@ async def stream_headless_message(
                     )
 
             if result_msg and result_msg.content:
+                # Mark job as completed
+                async with async_session_factory() as finish_db:
+                    persisted_job = await finish_db.get(AssistantJob, job_id)
+                    if persisted_job:
+                        persisted_job.status = AssistantJobStatus.completed.value
+                        persisted_job.completed_at = datetime.now(UTC)
+                        await finish_db.commit()
+
                 reply_content = result_msg.content
                 words = reply_content.split(" ")
                 for i, word in enumerate(words):
@@ -260,12 +277,26 @@ async def stream_headless_message(
                     f"data: {json.dumps({'conversation_id': str(conversation_id), 'message_id': str(result_msg.id), 'reply': reply_content, 'status': 'completed'})}\n\n"
                 )
             else:
+                async with async_session_factory() as finish_db:
+                    persisted_job = await finish_db.get(AssistantJob, job_id)
+                    if persisted_job:
+                        persisted_job.status = AssistantJobStatus.completed.value
+                        persisted_job.completed_at = datetime.now(UTC)
+                        await finish_db.commit()
+
                 yield (
                     f"event: completed\n"
                     f"data: {json.dumps({'conversation_id': str(conversation_id), 'status': 'no_response'})}\n\n"
                 )
 
         except Exception as exc:
+            async with async_session_factory() as error_db:
+                persisted_job = await error_db.get(AssistantJob, job_id)
+                if persisted_job:
+                    persisted_job.status = AssistantJobStatus.failed.value
+                    persisted_job.last_error = str(exc)[:1000]
+                    await error_db.commit()
+
             yield (
                 f"event: error\n"
                 f"data: {json.dumps({'conversation_id': str(conversation_id), 'error': str(exc)})}\n\n"
